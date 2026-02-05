@@ -297,12 +297,13 @@ SCAM_CATEGORIES = {
 
 REGEX_PATTERNS = {
     "url": r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+",
-    "upi_id": r"\b[\w\.-]+@(okaxis|okhdfcbank|okicici|oksbi|ybl|axl|upi)\b",
-    "phone": r"(\+91|0)?[6789]\d{9}",
+    "upi_id": r"\b[\w\.-]+@(okaxis|okhdfcbank|okicici|oksbi|ybl|axl|upi|paytm|gpay|phonepe|airtel|freecharge|mobikwik)\b",
+    "phone": r"(?:\+91[-\s]?)?[6789]\d{9}\b",  # Better phone pattern
     "bank_account": r"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b",
     "email": r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
     "pan_card": r"\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b",
-    "aadhaar": r"\b\d{4}[- ]?\d{4}[- ]?\d{4}\b"
+    "aadhaar": r"\b\d{4}[- ]?\d{4}[- ]?\d{4}\b",  # Exactly 12 digits with optional separators
+    "generic_upi": r"\b[\w\.-]+@[\w\.-]+\b"  # More general UPI pattern to catch variations
 }
 
 def identify_scam_category(text: str) -> Tuple[str, float]:
@@ -404,11 +405,15 @@ def detect_scam_intent(text: str, conversation_context: List = []) -> Dict:
         score += 0.3
         reasons.append(f"Found {len(urls)} URL(s): {', '.join(urls[:2])}")
 
-    # Check for UPI IDs
+    # Check for UPI IDs (specific patterns first)
     upi_ids = re.findall(REGEX_PATTERNS["upi_id"], text, re.IGNORECASE)
-    if upi_ids:
+    # Also check for generic UPI patterns to catch more
+    generic_upis = re.findall(REGEX_PATTERNS["generic_upi"], text, re.IGNORECASE)
+    # Combine both, removing duplicates
+    all_upis = list(set(upi_ids + [upi for upi in generic_upis if upi not in upi_ids]))
+    if all_upis:
         score += 0.4
-        reasons.append(f"Found UPI ID(s): {', '.join(upi_ids)}")
+        reasons.append(f"Found UPI ID(s): {', '.join(all_upis[:5])}")  # Show first 5
 
     # Check for bank accounts
     bank_accounts = re.findall(REGEX_PATTERNS["bank_account"], text)
@@ -416,20 +421,28 @@ def detect_scam_intent(text: str, conversation_context: List = []) -> Dict:
         score += 0.5
         reasons.append(f"Found bank account pattern(s)")
 
-    # Check for phone numbers
-    phones = re.findall(REGEX_PATTERNS["phone"], text)
-    if phones:
-        score += 0.2
-        reasons.append(f"Found phone number(s)")
-
-    # Check for PAN cards
+    # Check for PAN cards first (most specific pattern)
     pan_cards = re.findall(REGEX_PATTERNS["pan_card"], text)
     if pan_cards:
         score += 0.6
         reasons.append(f"Found PAN card(s): {', '.join(pan_cards)}")
 
-    # Check for Aadhaar numbers
-    aadhaars = re.findall(REGEX_PATTERNS["aadhaar"], text)
+    # Check for phone numbers first to avoid overlap with Aadhaar
+    phones = re.findall(REGEX_PATTERNS["phone"], text)
+    if phones:
+        score += 0.2
+        reasons.append(f"Found {len(phones)} phone number(s): {', '.join(phones[:3])}")
+
+    # Check for Aadhaar numbers (specific 12-digit pattern with separators)
+    # Only match if not already captured as phone number
+    aadhaars = []
+    raw_aadhaar_matches = re.findall(REGEX_PATTERNS["aadhaar"], text)
+    for match in raw_aadhaar_matches:
+        # Skip if this looks like a phone number (starts with +91 or has more than 12 digits)
+        clean_match = re.sub(r'[^\d]', '', match)
+        if len(clean_match) == 12 and not any(phone_num.replace('+', '').replace('-', '').replace(' ', '').endswith(clean_match) for phone_num in phones):
+            aadhaars.append(match)
+    
     if aadhaars:
         score += 0.6
         reasons.append(f"Found Aadhaar number(s): {', '.join(aadhaars)}")
@@ -451,16 +464,16 @@ def detect_scam_intent(text: str, conversation_context: List = []) -> Dict:
     if conversation_context:
         # Analyze the entire conversation history for patterns
         all_text = text_lower  # Start with current message
-        
+
         # Add all previous messages to the analysis
         for msg in conversation_context:
             if isinstance(msg, dict) and 'text' in msg:
                 all_text += " " + msg['text'].lower()
-        
+
         # Look for cumulative scam indicators across the entire conversation
         cumulative_score = 0.0
         cumulative_reasons = []
-        
+
         # Count total scam-related patterns across entire conversation
         for category, data in SCAM_CATEGORIES.items():
             category_count = 0
@@ -468,42 +481,45 @@ def detect_scam_intent(text: str, conversation_context: List = []) -> Dict:
                 matches = len(re.findall(pattern, all_text, re.IGNORECASE))
                 if matches > 0:
                     category_count += matches
-            
+
             if category_count > 1:  # Multiple instances of same category
                 cumulative_score += 0.2 * category_count
                 cumulative_reasons.append(f"Multiple {category} patterns found across conversation ({category_count} instances)")
-        
+
         # Count total URLs, UPI IDs, etc. across entire conversation
         total_urls = len(re.findall(REGEX_PATTERNS["url"], all_text))
         if total_urls > 1:  # More than 1 URL in conversation
             cumulative_score += 0.2 * (total_urls - 1)
             cumulative_reasons.append(f"Multiple URLs found across conversation ({total_urls} total)")
-        
-        total_upi_ids = len(re.findall(REGEX_PATTERNS["upi_id"], all_text, re.IGNORECASE))
+
+        # Count all UPI IDs across conversation (including generic ones)
+        total_specific_upis = len(re.findall(REGEX_PATTERNS["upi_id"], all_text, re.IGNORECASE))
+        total_generic_upis = len(re.findall(REGEX_PATTERNS["generic_upi"], all_text, re.IGNORECASE))
+        total_upi_ids = total_specific_upis + total_generic_upis
         if total_upi_ids > 0:  # Any UPI IDs in conversation
             cumulative_score += 0.3 * total_upi_ids
             cumulative_reasons.append(f"UPI ID(s) found across conversation ({total_upi_ids} total)")
-        
+
         # Check for escalation patterns (moving from generic to specific requests)
         escalation_indicators = [
             r"verify|confirm|immediately|urgent|now",  # Urgency indicators
             r"personal|details|information|private",   # Information requests
             r"send|share|provide|transfer|money|payment"  # Financial requests
         ]
-        
+
         escalation_score = 0
         for indicator in escalation_indicators:
             if re.search(indicator, all_text, re.IGNORECASE):
                 escalation_score += 0.15
-        
+
         if escalation_score > 0:
             cumulative_score += escalation_score
             cumulative_reasons.append(f"Found escalation patterns across conversation")
-        
+
         # Add cumulative score to main score
         score += cumulative_score
         reasons.extend(cumulative_reasons)
-        
+
         # Also check for sequential scammy messages in the conversation
         recent_scammy_messages = sum(1 for msg in conversation_context[-3:] if detect_scam_intent(msg.get('text', ''), [])['score'] > 0.35)
         if recent_scammy_messages > 1:
@@ -519,7 +535,7 @@ def detect_scam_intent(text: str, conversation_context: List = []) -> Dict:
         "categories": detected_categories,
         "extracted": {
             "urls": urls,
-            "upi_ids": upi_ids,
+            "upi_ids": all_upis,  # Use the combined list
             "bank_accounts": bank_accounts,
             "phones": phones,
             "pan_cards": pan_cards,
@@ -916,10 +932,16 @@ def extract_intelligence(text: str, session_id: str) -> Dict:
         session_data["urls"].add(url)
 
     for upi in detection["extracted"]["upi_ids"]:
-        session_data["upi_ids"].add(upi.lower())
+        # Clean UPI ID and add to set
+        upi_clean = upi.strip().lower()
+        if len(upi_clean) >= 5:  # Basic validation for UPI ID
+            session_data["upi_ids"].add(upi_clean)
 
     for account in detection["extracted"]["bank_accounts"]:
-        session_data["bank_accounts"].add(account)
+        # Clean bank account number
+        account_clean = re.sub(r'[^\d]', '', account)  # Keep only digits
+        if len(account_clean) >= 8:  # Basic validation for bank account
+            session_data["bank_accounts"].add(account)
 
     for phone in detection["extracted"]["phones"]:
         # Clean phone number
@@ -934,7 +956,10 @@ def extract_intelligence(text: str, session_id: str) -> Dict:
         session_data["pan_cards"].add(pan.upper())
 
     for aadhaar in detection["extracted"]["aadhaars"]:
-        session_data["aadhaars"].add(aadhaar)
+        # Clean Aadhaar number
+        aadhaar_clean = re.sub(r'[^\d]', '', aadhaar)  # Keep only digits
+        if len(aadhaar_clean) == 12:  # Validate Aadhaar length
+            session_data["aadhaars"].add(aadhaar)
 
     # Store scam keywords found
     for reason in detection.get("reasons", []):
@@ -1138,13 +1163,13 @@ def process_message():
     # Add extracted data if scam detected
     if scam_detected:
         response["extractedData"] = {
-            "bankAccounts": list(intelligence["bank_accounts"])[:3],
-            "upiIds": list(intelligence["upi_ids"])[:3],  # Fixed: Changed to match guidelines
-            "phishingLinks": list(intelligence["urls"])[:3],
-            "phoneNumbers": list(intelligence["phones"])[:3],
-            "suspiciousKeywords": list(intelligence["keywords"])[:5],
-            "panCards": list(intelligence["pan_cards"])[:3],
-            "aadhaarNumbers": list(intelligence["aadhaars"])[:3]
+            "bankAccounts": list(intelligence["bank_accounts"])[:5],  # Increased from 3 to 5
+            "upiIds": list(intelligence["upi_ids"])[:5],  # Increased from 3 to 5
+            "phishingLinks": list(intelligence["urls"])[:5],  # Increased from 3 to 5
+            "phoneNumbers": list(intelligence["phones"])[:5],  # Increased from 3 to 5
+            "suspiciousKeywords": list(intelligence["keywords"])[:10],  # Increased from 5 to 10
+            "panCards": list(intelligence["pan_cards"])[:5],  # Increased from 3 to 5
+            "aadhaarNumbers": list(intelligence["aadhaars"])[:5]  # Increased from 3 to 5
         }
 
     print(f"[API] Processed session={session_id}, scam={scam_detected}, "
