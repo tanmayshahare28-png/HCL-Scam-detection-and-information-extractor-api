@@ -387,12 +387,12 @@ def detect_scam_intent(text: str, conversation_context: List = []) -> Dict:
     for category, data in SCAM_CATEGORIES.items():
         category_score = 0.0
         category_reasons = []
-        
+
         for pattern in data["patterns"]:
             if re.search(pattern, text_lower, re.IGNORECASE):
                 category_score += 0.1
                 category_reasons.append(f"Matched {category} pattern: {pattern}")
-        
+
         if category_score > 0:
             score += category_score
             reasons.extend(category_reasons)
@@ -447,8 +447,64 @@ def detect_scam_intent(text: str, conversation_context: List = []) -> Dict:
         score += 0.15
         reasons.append("Multiple exclamation marks")
 
-    # Increase score based on conversation context (if multiple scammy messages in a row)
+    # Increase score based on conversation context (analyze entire conversation history)
     if conversation_context:
+        # Analyze the entire conversation history for patterns
+        all_text = text_lower  # Start with current message
+        
+        # Add all previous messages to the analysis
+        for msg in conversation_context:
+            if isinstance(msg, dict) and 'text' in msg:
+                all_text += " " + msg['text'].lower()
+        
+        # Look for cumulative scam indicators across the entire conversation
+        cumulative_score = 0.0
+        cumulative_reasons = []
+        
+        # Count total scam-related patterns across entire conversation
+        for category, data in SCAM_CATEGORIES.items():
+            category_count = 0
+            for pattern in data["patterns"]:
+                matches = len(re.findall(pattern, all_text, re.IGNORECASE))
+                if matches > 0:
+                    category_count += matches
+            
+            if category_count > 1:  # Multiple instances of same category
+                cumulative_score += 0.2 * category_count
+                cumulative_reasons.append(f"Multiple {category} patterns found across conversation ({category_count} instances)")
+        
+        # Count total URLs, UPI IDs, etc. across entire conversation
+        total_urls = len(re.findall(REGEX_PATTERNS["url"], all_text))
+        if total_urls > 1:  # More than 1 URL in conversation
+            cumulative_score += 0.2 * (total_urls - 1)
+            cumulative_reasons.append(f"Multiple URLs found across conversation ({total_urls} total)")
+        
+        total_upi_ids = len(re.findall(REGEX_PATTERNS["upi_id"], all_text, re.IGNORECASE))
+        if total_upi_ids > 0:  # Any UPI IDs in conversation
+            cumulative_score += 0.3 * total_upi_ids
+            cumulative_reasons.append(f"UPI ID(s) found across conversation ({total_upi_ids} total)")
+        
+        # Check for escalation patterns (moving from generic to specific requests)
+        escalation_indicators = [
+            r"verify|confirm|immediately|urgent|now",  # Urgency indicators
+            r"personal|details|information|private",   # Information requests
+            r"send|share|provide|transfer|money|payment"  # Financial requests
+        ]
+        
+        escalation_score = 0
+        for indicator in escalation_indicators:
+            if re.search(indicator, all_text, re.IGNORECASE):
+                escalation_score += 0.15
+        
+        if escalation_score > 0:
+            cumulative_score += escalation_score
+            cumulative_reasons.append(f"Found escalation patterns across conversation")
+        
+        # Add cumulative score to main score
+        score += cumulative_score
+        reasons.extend(cumulative_reasons)
+        
+        # Also check for sequential scammy messages in the conversation
         recent_scammy_messages = sum(1 for msg in conversation_context[-3:] if detect_scam_intent(msg.get('text', ''), [])['score'] > 0.35)
         if recent_scammy_messages > 1:
             score += 0.2  # Boost confidence if multiple scammy messages in sequence
@@ -459,7 +515,7 @@ def detect_scam_intent(text: str, conversation_context: List = []) -> Dict:
     return {
         "score": round(score, 2),
         "detected": score > 0.35,  # Threshold for detection
-        "reasons": reasons[:3],  # Top 3 reasons
+        "reasons": reasons[:5],  # Top 5 reasons (increased from 3)
         "categories": detected_categories,
         "extracted": {
             "urls": urls,
@@ -499,8 +555,8 @@ def generate_agent_response_with_context(text: str, session_id: str, scam_detect
     })
     msg_count = len(conversations[session_id])
 
-    # Try to use the enhanced state machine and Ollama-based agents from the 'ok' directory
-    # This will generate responses dynamically based on conversation context
+    # Try to use Ollama for generating human-like responses
+    # First try the enhanced state machine and Ollama-based agents from the 'ok' directory
     try:
         from services.state_machine import state_machine, ConversationState
         from services.sync_ollama_client import sync_ollama_client
@@ -542,211 +598,299 @@ def generate_agent_response_with_context(text: str, session_id: str, scam_detect
             agent_personality=VULNERABLE_AGENT_PROMPTS[vulnerable_agent_key]
         )
 
-        return response
+        return add_human_elements_to_response(response)
 
-    except ImportError as e:
-        # If enhanced agents are not available, continue with other fallbacks
-        print(f"Import error for enhanced agents: {e}")
-        pass
+    except (ImportError, AttributeError, FileNotFoundError):
+        # If the enhanced services are not available, try direct Ollama integration
+        try:
+            import requests
+            import json
+            
+            # Check if Ollama is running locally
+            ollama_url = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
+            
+            # Prepare the prompt based on the scam type and vulnerable agent
+            vulnerable_agent_key = get_most_susceptible_agent(agent_category)
+            agent_prompt = VULNERABLE_AGENT_PROMPTS.get(vulnerable_agent_key, VULNERABLE_AGENT_PROMPTS["cautious_curious_victim"])
+            
+            # Build the conversation context
+            conversation_context = "\n".join([f"Scammer: {msg.get('text', '')}" for msg in conversation_history[-3:]])
+            if conversation_context:
+                conversation_context += f"\nScammer: {text}"
+            else:
+                conversation_context = f"Scammer: {text}"
+                
+            prompt = f"""{agent_prompt}
+
+Current conversation:
+{conversation_context}
+
+Generate a short, natural response (1-2 sentences) as the vulnerable victim persona. Be human-like and conversational."""
+
+            # Call Ollama API directly
+            response = requests.post(
+                f"{ollama_url}/api/generate",
+                json={
+                    "model": os.getenv("OLLAMA_MODEL", "gemma3:4b"),
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.8,
+                        "top_p": 0.9,
+                        "num_predict": 100
+                    }
+                },
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                ollama_response = result.get("response", "").strip()
+                
+                # Clean up the response
+                ollama_response = ollama_response.replace("Victim:", "").replace("Response:", "").strip()
+                
+                return add_human_elements_to_response(ollama_response)
+            else:
+                print(f"Ollama API error: {response.status_code} - {response.text}")
+                
+        except Exception as e:
+            print(f"Error in direct Ollama integration: {e}")
+            import traceback
+            traceback.print_exc()
+            
     except Exception as e:
         print(f"Unexpected error in Ollama integration: {e}")
-        pass
+        import traceback
+        traceback.print_exc()
 
     # If Ollama is not available, use dynamic response generation based on context
     import random
     if not scam_detected:
-        # Generate a response based on the current message and context
+        # Generate a natural response based on the current message and context
         basic_responses = [
-            f"I'm not sure what you mean by '{text[:30]}...'. Can you explain?",
-            f"Sorry, I don't understand '{text[:30]}...'. Could you rephrase?",
-            f"Can you provide more details about '{text[:30]}...'?",
-            f"I need more information to help with '{text[:30]}...'.",
-            f"What exactly are you referring to with '{text[:30]}...'?",
-            f"I'm having trouble understanding your message about '{text[:30]}...'.",
-            f"Could you clarify what you're asking regarding '{text[:30]}...'?",
-            f"I'm not familiar with this request about '{text[:30]}...'.",
-            f"This seems unclear to me regarding '{text[:30]}...'.",
-            f"I need more context to respond properly to '{text[:30]}...'."
+            "I'm not sure I understand. Can you explain that again?",
+            "Sorry, I don't get what you mean. Could you rephrase?",
+            "Can you tell me more about that?",
+            "I need more information to help with that.",
+            "What exactly do you mean?",
+            "I'm having trouble understanding your message.",
+            "Could you clarify what you're asking?",
+            "I'm not familiar with this request.",
+            "This seems unclear to me.",
+            "I need more context to respond properly."
         ]
-        return random.choice(basic_responses)
+        return add_human_elements_to_response(random.choice(basic_responses))
 
-    # For scam messages, generate context-aware responses dynamically based on vulnerable personality
+    # For scam messages, generate natural, human-like responses based on vulnerable personality
     text_lower = text.lower()
 
     # Determine the most susceptible agent for this scam type
     vulnerable_agent_key = get_most_susceptible_agent(agent_category)
     vulnerable_agent_profile = get_agent_profile(vulnerable_agent_key)
 
-    # Generate dynamic responses based on detected patterns in the message and agent vulnerability
+    # Generate natural responses based on detected patterns in the message and agent vulnerability
     if any(word in text_lower for word in ["bank", "account", "blocked", "suspended", "freeze"]):
         if vulnerable_agent_key == "elderly_financial_victim":
             # Elderly victims are more trusting and concerned
             bank_responses = [
-                f"Oh dear, is my account really blocked? What do I need to do to fix this?",
-                f"I'm so worried about my savings. How can I verify this is really from the bank?",
-                f"Please help me, I don't want to lose my life's savings. What information do you need?",
-                f"My children always told me to be careful, but I need to resolve this. What should I do?",
-                f"I trust you're from the bank, but I'm scared. Can you guide me through this?",
-                f"I've had my account for years. Is this really necessary?",
-                f"I'm not very tech-savvy, but I want to make sure everything is safe.",
-                f"Should I drive to the branch to verify this? Or can you help me here?",
-                f"I just want to make sure my family is protected. What's the safest way?",
-                f"You sound official, but I'm nervous. Can you reassure me this is real?"
+                "Oh dear, is my account really blocked? What do I need to do to fix this?",
+                "I'm so worried about my savings. How can I verify this is really from the bank?",
+                "Please help me, I don't want to lose my life's savings. What information do you need?",
+                "My children always told me to be careful, but I need to resolve this. What should I do?",
+                "I trust you're from the bank, but I'm scared. Can you guide me through this?",
+                "I've had my account for years. Is this really necessary?",
+                "I'm not very tech-savvy, but I want to make sure everything is safe.",
+                "Should I drive to the branch to verify this? Or can you help me here?",
+                "I just want to make sure my family is protected. What's the safest way?",
+                "You sound official, but I'm nervous. Can you reassure me this is real?"
             ]
         else:
             # Other agents respond differently
             bank_responses = [
-                f"Why is my account being blocked? What did I do wrong with '{text[:20]}...'?",
-                f"I'm worried. How can I verify this safely regarding '{text[:20]}...'?",
-                f"Which bank are you from? I need to confirm this is legitimate about '{text[:20]}...'?",
-                f"Can you send me the official website link to verify '{text[:20]}...'?",
-                f"What information exactly do you need from me about '{text[:20]}...'?",
-                f"I need to call my bank directly to confirm this about '{text[:20]}...'?",
-                f"This seems unusual. Can you provide more details about '{text[:20]}...'?",
-                f"I have to be careful with account information these days regarding '{text[:20]}...'?",
-                f"How do I know this is really from the bank about '{text[:20]}...'?",
-                f"I'll need to verify this through official channels about '{text[:20]}...'."
+                "Why is my account being blocked? What did I do wrong?",
+                "I'm worried. How can I verify this safely?",
+                "Which bank are you from? I need to confirm this is legitimate.",
+                "Can you send me the official website link to verify?",
+                "What information exactly do you need from me?",
+                "I need to call my bank directly to confirm this.",
+                "This seems unusual. Can you provide more details?",
+                "I have to be careful with account information these days.",
+                "How do I know this is really from the bank?",
+                "I'll need to verify this through official channels."
             ]
-        return random.choice(bank_responses)
+        return add_human_elements_to_response(random.choice(bank_responses))
 
     elif any(word in text_lower for word in ["upi", "payment", "transfer", "money"]):
         if vulnerable_agent_key == "tech_naive_victim":
             # Tech-naive victims are more trusting of payment instructions
             payment_responses = [
-                f"I'm not sure how to do this. Can you walk me through the payment process?",
-                f"I trust you know what you're doing. How do I make this payment safely?",
-                f"I'm not great with apps. Do I just follow the instructions you give me?",
-                f"You seem knowledgeable about this. What's the safest way to proceed?",
-                f"I want to make sure I do this right. Can you guide me step by step?",
-                f"I've heard about UPI but never used it much. Is this normal?",
-                f"If you say it's safe, I'll follow your instructions.",
-                f"I just want to resolve this issue. What do I need to do?",
-                f"I'm not tech-savvy, but I trust your guidance.",
-                f"Please help me understand what I'm supposed to do."
+                "I'm not sure how to do this. Can you walk me through the payment process?",
+                "I trust you know what you're doing. How do I make this payment safely?",
+                "I'm not great with apps. Do I just follow the instructions you give me?",
+                "You seem knowledgeable about this. What's the safest way to proceed?",
+                "I want to make sure I do this right. Can you guide me step by step?",
+                "I've heard about UPI but never used it much. Is this normal?",
+                "If you say it's safe, I'll follow your instructions.",
+                "I just want to resolve this issue. What do I need to do?",
+                "I'm not tech-savvy, but I trust your guidance.",
+                "Please help me understand what I'm supposed to do."
             ]
         else:
             # Other agents respond differently
             payment_responses = [
-                f"I need to verify this is a legitimate request about '{text[:20]}...'.",
-                f"Can you provide more details about this payment '{text[:20]}...?'",
-                f"I'm cautious about sharing UPI details regarding '{text[:20]}...'.",
-                f"How do I know this payment is safe for '{text[:20]}...?'",
-                f"What are the terms of this transaction '{text[:20]}...?'",
-                f"I've heard about UPI scams lately, so I'm being careful about '{text[:20]}...'.",
-                f"Can you verify your identity as the recipient for '{text[:20]}...?'",
-                f"I prefer to initiate payments myself for '{text[:20]}...'.",
-                f"This seems suspicious. Are you sure this is safe for '{text[:20]}...?'",
-                f"I need to check with my family before sharing UPI info about '{text[:20]}....'"
+                "I need to verify this is a legitimate request.",
+                "Can you provide more details about this payment?",
+                "I'm cautious about sharing UPI details.",
+                "How do I know this payment is safe?",
+                "What are the terms of this transaction?",
+                "I've heard about UPI scams lately, so I'm being careful.",
+                "Can you verify your identity as the recipient?",
+                "I prefer to initiate payments myself.",
+                "This seems suspicious. Are you sure this is safe?",
+                "I need to check with my family before sharing UPI info."
             ]
-        return random.choice(payment_responses)
+        return add_human_elements_to_response(random.choice(payment_responses))
 
     elif any(word in text_lower for word in ["love", "relationship", "romance", "heart"]):
         if vulnerable_agent_key == "young_romance_victim":
             # Romance scam victims are emotionally engaged
             romance_responses = [
-                f"I've been feeling lonely lately. Tell me more about yourself.",
-                f"I'm flattered that you think so highly of me. What would you like to know?",
-                f"I'm interested in getting to know you better. What's your story?",
-                f"I've been looking for someone special. How did you find me?",
-                f"I feel like I can trust you. What do you need from me?",
-                f"I'm glad I found someone who understands me. How can I help?",
-                f"You seem genuine. What are your intentions with me?",
-                f"I've been wanting to connect with someone. What are your feelings?",
-                f"I'm happy to hear from you. What's next for us?",
-                f"I feel a connection with you. How can I support you?"
+                "I've been feeling lonely lately. Tell me more about yourself.",
+                "I'm flattered that you think so highly of me. What would you like to know?",
+                "I'm interested in getting to know you better. What's your story?",
+                "I've been looking for someone special. How did you find me?",
+                "I feel like I can trust you. What do you need from me?",
+                "I'm glad I found someone who understands me. How can I help?",
+                "You seem genuine. What are your intentions with me?",
+                "I've been wanting to connect with someone. What are your feelings?",
+                "I'm happy to hear from you. What's next for us?",
+                "I feel a connection with you. How can I support you?"
             ]
         else:
             # Other agents respond differently
             romance_responses = [
-                f"I need to be careful about financial requests in relationships.",
-                f"How can I verify your identity before discussing personal matters?",
-                f"I prefer to meet in person before sharing personal details.",
-                f"I'm not comfortable sending money to online contacts.",
-                f"Can we discuss this more before proceeding with anything?",
-                f"Money should never be part of a real relationship.",
-                f"I need to trust and verify you first.",
-                f"This seems rushed for our relationship stage.",
-                f"I have financial responsibilities to consider.",
-                f"I'm not in a position to send money right now."
+                "I need to be careful about financial requests in relationships.",
+                "How can I verify your identity before discussing personal matters?",
+                "I prefer to meet in person before sharing personal details.",
+                "I'm not comfortable sending money to online contacts.",
+                "Can we discuss this more before proceeding with anything?",
+                "Money should never be part of a real relationship.",
+                "I need to trust and verify you first.",
+                "This seems rushed for our relationship stage.",
+                "I have financial responsibilities to consider.",
+                "I'm not in a position to send money right now."
             ]
-        return random.choice(romance_responses)
+        return add_human_elements_to_response(random.choice(romance_responses))
 
     elif any(word in text_lower for word in ["investment", "profit", "return", "money"]):
         if vulnerable_agent_key == "middle_aged_investment_victim":
             # Investment victims are interested in financial growth
             investment_responses = [
-                f"That sounds promising. What are the specific returns I can expect?",
-                f"I have some savings I could invest. What's the minimum amount?",
-                f"I'm looking for ways to secure my family's future. Tell me more.",
-                f"Is this a guaranteed return investment? I need to be sure.",
-                f"I've been thinking about diversifying my portfolio. How does this work?",
-                f"Can you provide documentation about this opportunity?",
-                f"I'm interested, but I need to understand the risks involved.",
-                f"What's the timeline for seeing returns on this investment?",
-                f"I need to discuss this with my family, but I'm intrigued.",
-                f"Is this registered with financial regulators? I want to be safe."
+                "That sounds promising. What are the specific returns I can expect?",
+                "I have some savings I could invest. What's the minimum amount?",
+                "I'm looking for ways to secure my family's future. Tell me more.",
+                "Is this a guaranteed return investment? I need to be sure.",
+                "I've been thinking about diversifying my portfolio. How does this work?",
+                "Can you provide documentation about this opportunity?",
+                "I'm interested, but I need to understand the risks involved.",
+                "What's the timeline for seeing returns on this investment?",
+                "I need to discuss this with my family, but I'm intrigued.",
+                "Is this registered with financial regulators? I want to be safe."
             ]
         else:
             # Other agents respond differently
             investment_responses = [
-                f"That sounds interesting. What are the risks involved?",
-                f"I'd like to verify this investment opportunity first.",
-                f"Are there any fees I need to pay upfront?",
-                f"Can you provide documentation about this investment?",
-                f"How can I verify the legitimacy of this offer?",
-                f"I've been burned by investments before, so I'm cautious.",
-                f"What's the track record of this investment?",
-                f"I need to speak with a financial advisor first.",
-                f"These high returns seem too good to be true.",
-                f"Can you provide references from other investors?"
+                "That sounds interesting. What are the risks involved?",
+                "I'd like to verify this investment opportunity first.",
+                "Are there any fees I need to pay upfront?",
+                "Can you provide documentation about this investment?",
+                "How can I verify the legitimacy of this offer?",
+                "I've been burned by investments before, so I'm cautious.",
+                "What's the track record of this investment?",
+                "I need to speak with a financial advisor first.",
+                "These high returns seem too good to be true.",
+                "Can you provide references from other investors?"
             ]
-        return random.choice(investment_responses)
+        return add_human_elements_to_response(random.choice(investment_responses))
 
     elif any(word in text_lower for word in ["computer", "virus", "support", "microsoft"]):
         if vulnerable_agent_key == "tech_naive_victim":
             # Tech support victims trust experts
             tech_responses = [
-                f"I'm having trouble with my computer. Can you help?",
-                f"I don't know much about computers. What do I need to do?",
-                f"You sound like you know what you're talking about. How do I fix this?",
-                f"I'm worried about viruses. Can you scan my computer?",
-                f"I trust you can help me. What's the safest way to proceed?",
-                f"I've never done this before. Can you guide me?",
-                f"I'm scared something is wrong with my computer. Please help.",
-                f"I rely on my computer for everything. How do I solve this?",
-                f"I'm not tech-savvy, but I want to fix this problem.",
-                f"Thank you for offering to help. What do I do next?"
+                "I'm having trouble with my computer. Can you help?",
+                "I don't know much about computers. What do I need to do?",
+                "You sound like you know what you're talking about. How do I fix this?",
+                "I'm worried about viruses. Can you scan my computer?",
+                "I trust you can help me. What's the safest way to proceed?",
+                "I've never done this before. Can you guide me?",
+                "I'm scared something is wrong with my computer. Please help.",
+                "I rely on my computer for everything. How do I solve this?",
+                "I'm not tech-savvy, but I want to fix this problem.",
+                "Thank you for offering to help. What do I do next?"
             ]
         else:
             # Other agents respond differently
             tech_responses = [
-                f"I'm experiencing some computer issues. Can you help?",
-                f"How do I know you're really from Microsoft?",
-                f"What information do you need to fix my computer?",
-                f"Can you verify your identity as a support agent?",
-                f"I prefer to contact support through official channels.",
-                f"I've heard about fake tech support calls.",
-                f"Can you provide a callback number?",
-                f"I'll call the official support number instead.",
-                f"I need to be careful about remote access.",
-                f"Let me check your credentials first."
+                "I'm experiencing some computer issues. Can you help?",
+                "How do I know you're really from Microsoft?",
+                "What information do you need to fix my computer?",
+                "Can you verify your identity as a support agent?",
+                "I prefer to contact support through official channels.",
+                "I've heard about fake tech support calls.",
+                "Can you provide a callback number?",
+                "I'll call the official support number instead.",
+                "I need to be careful about remote access.",
+                "Let me check your credentials first."
             ]
-        return random.choice(tech_responses)
+        return add_human_elements_to_response(random.choice(tech_responses))
 
-    # Fallback to general dynamic response
+    # Fallback to general natural response
     general_responses = [
-        f"I'm concerned about '{text[:30]}...'. Can you explain more?",
-        f"This sounds serious regarding '{text[:30]}...'. What should I do?",
-        f"I need to think carefully about '{text[:30]}...'.",
-        f"Can you provide proof or verification for '{text[:30]}...?'",
-        f"I always verify these kinds of requests about '{text[:30]}...'.",
-        f"This seems urgent about '{text[:30]}...'. Let me consider it.",
-        f"I need to be careful with requests like '{text[:30]}...'.",
-        f"Can you give me time to verify '{text[:30]}...?'",
-        f"I have questions about '{text[:30]}...'. Can you clarify?",
-        f"I need to contact official sources about '{text[:30]}...'."
+        "I'm concerned about that. Can you explain more?",
+        "This sounds serious. What should I do?",
+        "I need to think carefully about that.",
+        "Can you provide proof or verification for that?",
+        "I always verify these kinds of requests.",
+        "This seems urgent. Let me consider it.",
+        "I need to be careful with requests like that.",
+        "Can you give me time to verify that?",
+        "I have questions about that. Can you clarify?",
+        "I need to contact official sources about that."
     ]
-    return random.choice(general_responses)
+    return add_human_elements_to_response(random.choice(general_responses))
+
+def add_human_elements_to_response(response: str) -> str:
+    """
+    Add human-like elements to make responses more natural
+    """
+    import random
+    
+    # Human hesitation words/phrases
+    hesitations = ["Umm...", "Ah...", "Actually...", "Well...", "So...", "Hmm...", "Er..."]
+    
+    # Random chance to add a hesitation at the beginning
+    if random.random() < 0.3:  # 30% chance
+        response = random.choice(hesitations) + " " + response
+    
+    # Random chance to add a hesitant phrase in the middle
+    if random.random() < 0.2 and len(response) > 20:  # 20% chance for longer responses
+        words = response.split()
+        mid_point = len(words) // 2
+        words.insert(mid_point, random.choice(["umm", "ah", "actually", "idk", "well"]))
+        response = " ".join(words)
+    
+    # Random chance to add a trailing thought
+    if random.random() < 0.25:  # 25% chance
+        trailing_thoughts = ["I guess?", "Maybe?", "Right?", "Not sure though.", "Something like that."]
+        if random.random() < 0.5:  # 50% of the time
+            response += " " + random.choice(trailing_thoughts)
+    
+    # Random chance to add "ya know" or similar
+    if random.random() < 0.15 and len(response) > 15:  # 15% chance for longer responses
+        response = response.replace(".", ", ya know.")
+    
+    return response
 
 def extract_intelligence(text: str, session_id: str) -> Dict:
     """
