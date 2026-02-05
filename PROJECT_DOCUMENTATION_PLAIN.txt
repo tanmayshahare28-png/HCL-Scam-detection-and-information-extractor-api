@@ -1,0 +1,350 @@
+Agentic Honey-Pot for Scam Detection and Intelligence Extraction
+
+Table of Contents
+1. Project Overview
+2. Key Features
+3. Architecture and How It Works
+4. Requirements
+5. Installation and Setup
+6. Usage Instructions
+7. API Documentation
+8. Technical Components
+9. Security and Privacy
+10. Troubleshooting
+
+Project Overview
+
+The Agentic Honey-Pot is an AI-powered system designed to detect scam messages and autonomously engage scammers to extract valuable intelligence without revealing detection. The system combines traditional pattern-matching algorithms with advanced AI techniques to create a sophisticated defense mechanism against online fraud.
+
+Problem Addressed
+Modern scammers adapt their tactics based on user responses, making traditional detection systems ineffective. This system creates a believable human-like persona that can engage scammers in multi-turn conversations to extract actionable intelligence while maintaining cover.
+
+Key Features
+
+1. Advanced Scam Detection
+- Multi-layered Detection: Combines pattern matching, machine learning, and AI analysis
+- Real-time Analysis: Instant detection of scam intent using multiple indicators
+- Adaptive Thresholds: Regionally-adjusted detection thresholds based on cybercrime statistics
+- Historical Learning: Uses past conversation data to improve detection accuracy
+
+2. AI-Powered Agent System
+- Ollama Integration: Uses Ollama for natural, human-like responses
+- Context-Aware Responses: Maintains conversation history for contextual understanding
+- Adaptive Strategy: Changes approach based on scammer behavior (pushy vs non-pushy)
+- Direct Response Format: Generates natural responses without explanations
+
+3. Intelligence Extraction
+- Information Harvesting: Extracts UPI IDs, URLs, phone numbers, and banking details
+- Behavioral Analysis: Identifies scammer tactics and patterns
+- Entity Recognition: Detects and categorizes scam-related entities
+- Relationship Mapping: Builds intelligence graphs of scam networks
+
+4. Enhanced Learning Capabilities
+- Dataset Integration: Incorporates cybercrime statistics for improved detection
+- Transcript Analysis: Learns from real scam conversation patterns
+- Intelligence Graph: Visualizes relationships between scam entities
+- Continuous Improvement: Adapts based on new scam patterns
+
+5. Pushy Scammer Compliance Strategy
+- Compliance Simulation: Pretends to comply when scammers get pushy
+- Information Extraction: Subtly requests details while appearing compliant
+- Maximum Intelligence: Extracts more information during aggressive phases
+
+Architecture and How It Works
+
+System Architecture
+Internet -> Ngrok Tunnel -> Flask API -> Ollama Agent -> Intelligence Engine -> Callback System
+
+Core Components
+
+1. API Layer
+- RESTful Interface: Standard HTTP endpoints for message processing
+- Authentication: API key validation with evaluation patterns
+- Rate Limiting: Prevents abuse while maintaining accessibility
+- CORS Support: Enables web-based interfaces
+
+2. Detection Engine
+- Pattern Matching: Traditional regex-based scam detection
+- Dataset Analysis: Uses cybercrime statistics for context
+- Transcript Learning: Incorporates real scam conversation patterns
+- Ollama Enhancement: AI-powered detection for improved accuracy
+
+3. Agent System
+- Response Generation: Creates natural, human-like responses
+- Conversation Management: Maintains context across multiple messages
+- Strategy Selection: Chooses between verification and compliance approaches
+- Intelligence Gathering: Extracts information while maintaining cover
+
+4. Intelligence Engine
+- Entity Extraction: Identifies and categorizes scam-related data
+- Graph Building: Creates relationship maps between entities
+- Statistical Analysis: Provides insights into scam patterns
+- Data Visualization: Prepares data for graph visualization
+
+5. Callback System
+- Automatic Reporting: Sends results to evaluation endpoint when scam detected
+- Data Formatting: Structures intelligence data according to specifications
+- Error Handling: Manages callback failures gracefully
+- Privacy Protection: Ensures responsible data handling
+
+Processing Flow
+1. Message Reception: API receives scam message with session context
+2. Scam Detection: Multiple detection layers analyze the message
+3. Agent Activation: If scam detected, AI agent takes control
+4. Response Generation: Agent creates appropriate response based on context
+5. Intelligence Extraction: Relevant data is extracted and stored
+6. Callback Trigger: Final intelligence is sent to evaluation endpoint
+7. Response Return: Processed response is returned to sender
+
+Requirements
+
+System Requirements
+- Operating System: Windows 10/11, Linux, or macOS
+- RAM: Minimum 4GB (8GB recommended)
+- Storage: 2GB available space
+- Network: Stable internet connection
+
+Software Requirements
+- Python: Version 3.8 or higher
+- Ollama: Local installation for AI processing
+- Ngrok: For public endpoint tunneling
+- Git: For repository cloning
+
+Dependencies
+flask>=2.0.0
+flask-cors>=3.0.0
+requests>=2.25.0
+python-dotenv>=0.19.0
+
+Installation and Setup
+
+Prerequisites
+1. Install Python 3.8+
+2. Install Ollama from https://ollama.ai/
+3. Download and install Ngrok from https://ngrok.com/
+
+Step-by-Step Installation
+
+1. Clone the Repository
+git clone <repository-url>
+cd honeypot-api-project
+
+2. Set Up Virtual Environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+3. Install Dependencies
+pip install -r requirements.txt
+
+4. Configure Environment Variables
+Create a .env file in the project root:
+OLLAMA_API_URL=http://localhost:11434
+OLLAMA_MODEL=llama2
+API_VALIDATION_MODE=LENIENT
+EVALUATION_ENDPOINT=https://hackathon.guvi.in/api/updateHoneyPotFinalResult
+ENABLE_CALLBACK=true
+
+5. Start Ollama Server
+ollama serve
+
+6. Pull Required Models
+ollama pull llama2
+
+Usage Instructions
+
+Running the Application
+
+1. Start the API Server
+cd api
+python main.py
+
+2. Create Public Endpoint (Optional)
+ngrok http 5000
+
+3. Test the API
+curl -X POST http://localhost:5000/api/honeypot/ \
+  -H "x-api-key: test_key_123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "test-session",
+    "message": {
+      "sender": "scammer",
+      "text": "Your account has been suspended!",
+      "timestamp": 1770005528731
+    },
+    "conversationHistory": [],
+    "metadata": {
+      "channel": "SMS",
+      "language": "English",
+      "locale": "IN"
+    }
+  }'
+
+Using the Web Interface
+1. Open honeypot_tester.html in your browser
+2. Enter the API endpoint URL
+3. Test with various scam messages
+4. Monitor the intelligence extraction results
+
+API Key Management
+- Test Keys: test_key_123, prod_key_456, demo_key_789
+- Evaluation Keys: Any key starting with eval_, test_, hackathon_
+- Custom Keys: Valid keys with 8+ characters (in LENIENT mode)
+
+API Documentation
+
+Base Endpoint
+https://your-endpoint.ngrok-free.dev/api/honeypot/
+
+Request Format
+{
+  "sessionId": "unique-session-id",
+  "message": {
+    "sender": "scammer",
+    "text": "scam message content",
+    "timestamp": 1770005528731
+  },
+  "conversationHistory": [
+    {
+      "sender": "scammer",
+      "text": "previous message",
+      "timestamp": 1770005528730
+    }
+  ],
+  "metadata": {
+    "channel": "SMS",
+    "language": "English",
+    "locale": "IN"
+  }
+}
+
+Headers
+- x-api-key: Authentication key
+- Content-Type: application/json
+
+Response Format
+{
+  "status": "success",
+  "sessionId": "session-id",
+  "scamDetected": true,
+  "confidence": 0.8,
+  "reply": "generated response",
+  "detectionDetails": {
+    "score": 0.8,
+    "reasons": ["detection reasons"],
+    "extractedCounts": {
+      "upi_ids": 1,
+      "urls": 0,
+      "phones": 0,
+      "bank_accounts": 0
+    }
+  },
+  "extractedData": {
+    "upids": ["extracted-upi-ids"],
+    "phishingLinks": [],
+    "phoneNumbers": [],
+    "bankAccounts": [],
+    "suspiciousKeywords": ["keywords"]
+  },
+  "sessionStats": {
+    "totalMessages": 1,
+    "responseTime": 0.5
+  },
+  "timestamp": "2026-02-05T07:13:30.326902"
+}
+
+Additional Endpoints
+- GET / - API information
+- GET /health - Health check
+- GET /api/validate - Validation endpoint
+- GET /api/intelligence/graph - Graph data
+- GET /api/intelligence/statistics - Intelligence statistics
+- GET /api/intelligence/session-conversations/{session_id} - Session history
+
+Technical Components
+
+Intelligence Graph
+The system maintains a knowledge graph of scam entities and relationships:
+- Nodes: Cases, UPI IDs, phone numbers, URLs, behavioral patterns
+- Edges: Relationships between entities (used in, exploits, contacted by)
+- Risk Scoring: Dynamic scoring based on entity reuse and patterns
+- Visualization: Data formatted for graph visualization tools
+
+Transcript Analysis
+Real scam conversation data is analyzed to improve detection:
+- Pattern Extraction: Identifies scam indicators from actual conversations
+- Category Classification: Categorizes scams by type and tactics
+- Urgency Detection: Identifies pressure tactics used by scammers
+- Authority Claims: Recognizes impersonation attempts
+
+Dataset Integration
+Cybercrime statistics enhance detection accuracy:
+- Regional Adaptation: Adjusts thresholds based on local fraud rates
+- Trend Analysis: Identifies emerging scam patterns
+- Risk Multipliers: Applies weights based on crime statistics
+- Geographic Awareness: Adapts to high-risk regions
+
+Ollama Agent System
+AI-powered response generation:
+- Natural Language: Generates human-like responses
+- Context Awareness: Maintains conversation history
+- Strategy Adaptation: Changes approach based on scammer behavior
+- Information Extraction: Subtly requests details while appearing compliant
+
+Security and Privacy
+
+Data Protection
+- No Personal Data: System does not store personal user information
+- Session Isolation: Each session is isolated and temporary
+- Encrypted Transmission: All data transmitted securely
+- Responsible Handling: Follows ethical data handling practices
+
+Privacy Measures
+- Anonymized Processing: Messages processed without identifying information
+- Temporary Storage: Session data cleared after processing
+- Secure Logging: Sensitive information redacted from logs
+- Access Controls: API key authentication required
+
+Ethical Considerations
+- No Impersonation: System does not impersonate real individuals
+- Legal Compliance: Follows all applicable laws and regulations
+- Responsible Engagement: Engages scammers ethically to extract intelligence
+- Data Minimization: Collects only necessary intelligence data
+
+Troubleshooting
+
+Common Issues
+
+1. API Not Responding
+- Check: Ensure main.py is running
+- Solution: Restart the server with python main.py
+
+2. Ollama Connection Issues
+- Check: Verify Ollama server is running with ollama serve
+- Solution: Restart Ollama and ensure model is pulled
+
+3. Ngrok Tunnel Issues
+- Check: Verify Ngrok is properly configured
+- Solution: Restart Ngrok with ngrok http 5000
+
+4. Authentication Failures
+- Check: Verify API key format and validity
+- Solution: Use test keys or ensure custom key meets requirements
+
+5. Callback Failures
+- Check: Verify evaluation endpoint is accessible
+- Solution: Check network connectivity and endpoint configuration
+
+Performance Optimization
+- Model Selection: Use appropriate Ollama model for performance needs
+- Caching: Implement response caching for frequently used patterns
+- Load Balancing: Deploy multiple instances for high-volume scenarios
+- Monitoring: Implement health checks and performance monitoring
+
+Support Resources
+- Documentation: Refer to this comprehensive guide
+- Logs: Check server logs for detailed error information
+- Community: Reach out to the development community for assistance
+- Updates: Regular updates and improvements are released
+
+Note: This system is designed for educational and defensive purposes only. Use responsibly and in accordance with applicable laws and regulations.
