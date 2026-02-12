@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🛡️ Honeypot API - Multi-Agent Tester</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background: linear-gradient(135deg, #1a2a6c, #b21f1f, #1a2a6c);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 20px;
+        }
+
+        .chat-container {
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .status-container {
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            height: fit-content;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #4CAF50;
+            text-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+        }
+
+        .api-info {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+
+        .api-info p {
+            margin: 5px 0;
+        }
+
+        .highlight {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .chat-messages {
+            height: 400px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 10px;
+            max-width: 80%;
+        }
+
+        .scammer-message {
+            background: rgba(220, 20, 60, 0.3);
+            border-left: 4px solid #dc143c;
+            margin-left: 0;
+        }
+
+        .agent-message {
+            background: rgba(30, 144, 255, 0.3);
+            border-left: 4px solid #1e90ff;
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .input-area {
+            display: flex;
+            gap: 10px;
+        }
+
+        #messageInput {
+            flex: 1;
+            padding: 12px 15px;
+            border: none;
+            border-radius: 25px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 16px;
+        }
+
+        #messageInput::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        #sendButton {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 25px;
+            background: #4CAF50;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        #sendButton:hover {
+            background: #45a049;
+            transform: scale(1.05);
+        }
+
+        #sendButton:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status-title {
+            color: #FF9800;
+            margin-bottom: 15px;
+            text-align: center;
+            font-size: 1.2em;
+        }
+
+        .status-item {
+            background: rgba(255, 255, 255, 0.1);
+            margin-bottom: 10px;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 0.9em;
+        }
+
+        .status-label {
+            font-weight: bold;
+            color: #FF9800;
+            margin-bottom: 5px;
+            display: block;
+        }
+
+        .status-value {
+            color: #fff;
+        }
+
+        .confidence-bar {
+            width: 100%;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+
+        .confidence-level {
+            height: 100%;
+            border-radius: 10px;
+            transition: width 0.5s ease;
+        }
+
+        .low-confidence { background: #4CAF50; }
+        .medium-confidence { background: #FF9800; }
+        .high-confidence { background: #f44336; }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            display: none;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #4CAF50;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            color: #f44336;
+            text-align: center;
+            padding: 10px;
+            margin-top: 10px;
+            background: rgba(244, 67, 54, 0.2);
+            border-radius: 5px;
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+            
+            .chat-messages {
+                height: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="chat-container">
+            <h1>🛡️ Honeypot API - Multi-Agent Tester</h1>
+            
+            <div class="api-info">
+                <p><span class="status-label">API Endpoint:</span> <span class="highlight" id="apiEndpoint">Loading...</span></p>
+                <p><span class="status-label">Session ID:</span> <span class="highlight" id="sessionId">Not started</span></p>
+            </div>
+            
+            <div class="chat-messages" id="chatMessages">
+                <div class="message agent-message">
+                    Welcome! I'm the multi-agent honeypot system. Send me a message to test scam detection.
+                </div>
+            </div>
+            
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Analyzing message and engaging appropriate agent...</p>
+            </div>
+            
+            <div class="error" id="errorMessage"></div>
+            
+            <div class="input-area">
+                <input type="text" id="messageInput" placeholder="Type a scam message to test (e.g., 'Your bank account is blocked...')" autocomplete="off">
+                <button id="sendButton">Send →</button>
+            </div>
+        </div>
+        
+        <div class="status-container">
+            <h2 class="status-title">📊 Detection Status</h2>
+            
+            <div class="status-item">
+                <span class="status-label">Scam Detected</span>
+                <span class="status-value" id="scamDetected">Unknown</span>
+            </div>
+            
+            <div class="status-item">
+                <span class="status-label">Active Agent</span>
+                <span class="status-value" id="activeAgent">None</span>
+            </div>
+            
+            <div class="status-item">
+                <span class="status-label">Agent Personality</span>
+                <span class="status-value" id="agentPersonality">-</span>
+            </div>
+            
+            <div class="status-item">
+                <span class="status-label">Confidence Score</span>
+                <span class="status-value" id="confidenceScore">0.00</span>
+            </div>
+            
+            <div class="confidence-bar">
+                <div class="confidence-level" id="confidenceBar" style="width: 0%;"></div>
+            </div>
+            
+            <div class="status-item">
+                <span class="status-label">Detected Categories</span>
+                <span class="status-value" id="detectedCategories">None</span>
+            </div>
+            
+            <div class="status-item">
+                <span class="status-label">Extracted URLs</span>
+                <span class="status-value" id="extractedUrls">0</span>
+            </div>
+            
+            <div class="status-item">
+                <span class="status-label">Extracted UPI IDs</span>
+                <span class="status-value" id="extractedUpis">0</span>
+            </div>
+            
+            <div class="status-item">
+                <span class="status-label">Extracted Bank Accounts</span>
+                <span class="status-value" id="extractedBanks">0</span>
+            </div>
+            
+            <div class="status-item">
+                <span class="status-label">Suspicious Keywords</span>
+                <span class="status-value" id="suspiciousKeywords">0</span>
+            </div>
+            
+            <div class="status-item">
+                <span class="status-label">Response Time</span>
+                <span class="status-value" id="responseTime">0ms</span>
+            </div>
+            
+            <div class="status-item">
+                <span class="status-label">Total Messages</span>
+                <span class="status-value" id="totalMessages">0</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration - Update these with your actual API details
+        const API_BASE_URL = 'https://edmond-toadless-agelessly.ngrok-free.dev';
+        const API_ENDPOINT = '/api/honeypot/';
+        const API_KEY = 'test_key_123';
+        
+        // Global variables
+        let sessionId = null;
+        let messageHistory = [];
+        
+        // DOM Elements
+        const chatMessages = document.getElementById('chatMessages');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const loading = document.getElementById('loading');
+        const errorMessage = document.getElementById('errorMessage');
+        
+        // Status elements
+        const apiEndpointElement = document.getElementById('apiEndpoint');
+        const sessionIdElement = document.getElementById('sessionId');
+        const scamDetectedElement = document.getElementById('scamDetected');
+        const activeAgentElement = document.getElementById('activeAgent');
+        const agentPersonalityElement = document.getElementById('agentPersonality');
+        const confidenceScoreElement = document.getElementById('confidenceScore');
+        const confidenceBar = document.getElementById('confidenceBar');
+        const detectedCategoriesElement = document.getElementById('detectedCategories');
+        const extractedUrlsElement = document.getElementById('extractedUrls');
+        const extractedUpisElement = document.getElementById('extractedUpis');
+        const extractedBanksElement = document.getElementById('extractedBanks');
+        const suspiciousKeywordsElement = document.getElementById('suspiciousKeywords');
+        const responseTimeElement = document.getElementById('responseTime');
+        const totalMessagesElement = document.getElementById('totalMessages');
+        
+        // Set API endpoint in UI
+        apiEndpointElement.textContent = `${API_BASE_URL}${API_ENDPOINT}`;
+        
+        // Function to add message to chat
+        function addMessage(sender, text) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message');
+            
+            if (sender === 'scammer') {
+                messageDiv.classList.add('scammer-message');
+                messageDiv.textContent = `Scammer: ${text}`;
+            } else {
+                messageDiv.classList.add('agent-message');
+                messageDiv.textContent = `Agent: ${text}`;
+            }
+            
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Function to update status panel
+        function updateStatus(data) {
+            if (data) {
+                // Update scam detection status
+                scamDetectedElement.textContent = data.scamDetected ? 'YES' : 'NO';
+                scamDetectedElement.style.color = data.scamDetected ? '#f44336' : '#4CAF50';
+                
+                // Update active agent information
+                activeAgentElement.textContent = 'Ollama-Powered Agent';
+                agentPersonalityElement.textContent = data.scamDetected ? 'Scam Engagement Mode' : 'Normal Conversation Mode';
+                
+                // Update confidence score
+                const confidence = data.confidence || 0;
+                confidenceScoreElement.textContent = confidence.toFixed(2);
+                
+                // Update confidence bar
+                const percentage = confidence * 100;
+                confidenceBar.style.width = `${percentage}%`;
+                
+                // Color code the confidence bar
+                if (confidence < 0.4) {
+                    confidenceBar.className = 'confidence-level low-confidence';
+                } else if (confidence < 0.7) {
+                    confidenceBar.className = 'confidence-level medium-confidence';
+                } else {
+                    confidenceBar.className = 'confidence-level high-confidence';
+                }
+                
+                // Update detected categories/reasons
+                if (data.detectionDetails && data.detectionDetails.reasons) {
+                    const reasons = data.detectionDetails.reasons.join(', ') || 'None';
+                    detectedCategoriesElement.textContent = reasons;
+                } else {
+                    detectedCategoriesElement.textContent = 'None';
+                }
+                
+                // Update extracted data counts
+                if (data.detectionDetails && data.detectionDetails.extractedCounts) {
+                    extractedUrlsElement.textContent = data.detectionDetails.extractedCounts.urls || 0;
+                    extractedUpisElement.textContent = data.detectionDetails.extractedCounts.upi_ids || 0;
+                    extractedBanksElement.textContent = data.detectionDetails.extractedCounts.bank_accounts || 0;
+                }
+                
+                if (data.extractedData) {
+                    suspiciousKeywordsElement.textContent = data.extractedData.suspiciousKeywords ?
+                        data.extractedData.suspiciousKeywords.length : 0;
+                }
+                
+                // Update response time
+                if (data.sessionStats) {
+                    responseTimeElement.textContent = `${data.sessionStats.responseTime}ms`;
+                    totalMessagesElement.textContent = data.sessionStats.totalMessages || 0;
+                }
+                
+                // Update session ID
+                if (data.sessionId) {
+                    sessionId = data.sessionId;
+                    sessionIdElement.textContent = sessionId;
+                }
+            }
+        }
+        
+        // Function to send message to API
+        async function sendMessage() {
+            const messageText = messageInput.value.trim();
+            if (!messageText) return;
+            
+            // Disable input and show loading
+            messageInput.disabled = true;
+            sendButton.disabled = true;
+            loading.style.display = 'block';
+            errorMessage.style.display = 'none';
+            
+            // Add user message to chat
+            addMessage('scammer', messageText);
+            messageInput.value = '';
+            
+            try {
+                // Prepare the request payload
+                const payload = {
+                    sessionId: sessionId || undefined,
+                    message: {
+                        sender: "scammer",
+                        text: messageText,
+                        timestamp: Date.now()
+                    },
+                    conversationHistory: messageHistory,
+                    metadata: {
+                        channel: "SMS",
+                        language: "English",
+                        locale: "IN"
+                    }
+                };
+                
+                // Send to honeypot API
+                const response = await fetch(`${API_BASE_URL}${API_ENDPOINT}`, {
+                    method: 'POST',
+                    headers: {
+                        'x-api-key': API_KEY,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Add agent response to chat
+                    if (data.reply) {
+                        addMessage('agent', data.reply);
+                    }
+                    
+                    // Update status panel with response data
+                    updateStatus(data);
+                    
+                    // Add to message history
+                    messageHistory.push({
+                        sender: 'scammer',
+                        text: messageText,
+                        timestamp: Date.now()
+                    });
+                    
+                    if (data.reply) {
+                        messageHistory.push({
+                            sender: 'agent',
+                            text: data.reply,
+                            timestamp: Date.now()
+                        });
+                    }
+                } else {
+                    throw new Error(data.message || `HTTP error! status: ${response.status}`);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                errorMessage.textContent = `Error: ${error.message}`;
+                errorMessage.style.display = 'block';
+                addMessage('agent', 'Sorry, I encountered an error processing your message.');
+            } finally {
+                // Re-enable input and hide loading
+                messageInput.disabled = false;
+                sendButton.disabled = false;
+                loading.style.display = 'none';
+                messageInput.focus();
+            }
+        }
+        
+        // Event listeners
+        sendButton.addEventListener('click', sendMessage);
+        
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+        
+        // Initialize
+        messageInput.focus();
+    </script>
+</body>
+</html>

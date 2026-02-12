@@ -1,0 +1,19 @@
+# Email Configuration for Honeypot Monitor
+# Update these values based on your email provider
+
+# For Gmail:
+# 1. Enable 2-factor authentication
+# 2. Generate an App Password (not your regular password)
+# 3. Use that App Password below
+
+[EmailSettings]
+SMTPServer = smtp.gmail.com
+SMTPPort = 587
+Username = tamarvel647@gmail.com
+AppPassword = oyrm vymd dngu vnkl
+RecipientEmail = tamarvel647@gmail.com
+
+# For other providers:
+# Outlook/Hotmail: smtp-mail.outlook.com, Port 587
+# Yahoo: smtp.mail.yahoo.com, Port 587
+# Custom: Use your provider's SMTP settings

@@ -937,57 +937,14 @@ def check_url_on_spotthescam(url: str) -> Dict:
     Check a URL on spotthescam.in to see if it's reported as malicious
     """
     try:
-        # Check if the URL is valid first
-        import urllib.parse
-        parsed_url = urllib.parse.urlparse(url)
-        if not parsed_url.netloc or parsed_url.scheme not in ['http', 'https']:
-            return {
-                "url": url,
-                "is_malicious": False,
-                "risk_level": "low",
-                "details": {"note": "Invalid URL format"},
-                "status": "invalid"
-            }
-        
-        # Since spotthescam.in doesn't have a public API endpoint for checking URLs,
-        # we'll implement a simulated check that mimics what a real integration would do
-        # In a real scenario, they might have an endpoint like /api/check or similar
-        
-        # For now, we'll make a request to see if the URL exists and return appropriate status
-        # This simulates what would happen if there was an actual API
-        response = requests.head(url, timeout=10, allow_redirects=True)
-        
-        # If the URL is accessible, we'll return a simulated check result
-        # In a real implementation, this would call their actual API
+        # This is a simulated check since we don't have the actual API
+        # In a real implementation, we would call the spotthescam.in API
         return {
             "url": url,
-            "is_malicious": False,  # Default assumption for simulation
-            "risk_level": "unknown",  # Would come from their actual service
-            "details": {
-                "note": f"URL connectivity test performed (spotthescam.in integration simulated)",
-                "status_code": response.status_code,
-                "accessible": response.status_code < 400
-            },
+            "is_malicious": False,  # Default to false if we can't check
+            "risk_level": "unknown",
+            "details": {"note": "URL checked on spotthescam.in (simulated)"},
             "status": "checked"
-        }
-
-    except requests.exceptions.Timeout:
-        # Handle timeout specifically
-        return {
-            "url": url,
-            "is_malicious": None,
-            "risk_level": "unknown",
-            "details": {"error": "Request timed out checking URL"},
-            "status": "timeout"
-        }
-    except requests.exceptions.RequestException as e:
-        # Handle other request errors - this simulates what would happen if spotthescam.in API was down
-        return {
-            "url": url,
-            "is_malicious": None,
-            "risk_level": "unknown",
-            "details": {"error": f"Request error: {str(e)}"},
-            "status": "error"
         }
     except Exception as e:
         print(f"Error checking URL on spotthescam.in: {e}")
@@ -1190,7 +1147,7 @@ Generate a short, natural response (1-2 sentences) as the vulnerable victim pers
                 "How can I verify your identity before discussing personal matters?",
                 "I prefer to meet in person before sharing personal details.",
                 "I'm not comfortable sending money to online contacts.",
-                "Can we discuss this more before proceeding?",
+                "Can we discuss this more before proceeding with anything?",
                 "Money should never be part of a real relationship.",
                 "I need to trust and verify you first.",
                 "This seems rushed for our relationship stage.",

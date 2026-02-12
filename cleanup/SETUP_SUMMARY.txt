@@ -1,0 +1,57 @@
+# Honeypot API Monitoring System - Complete Setup
+
+## Current Status
+- **API Server**: Running on http://localhost:5000
+- **Ngrok Tunnel**: Public URL: https://edmond-toadless-agelessly.ngrok-free.dev
+- **Monitoring Script**: Running with multiple notification methods
+
+## Notification Configuration
+Due to captive WiFi restrictions, email notifications may not work reliably. The system is configured to use SMS notifications via email-to-SMS gateway.
+
+### To Configure SMS Notifications:
+1. Run `setup_sms_notifications.bat`
+2. Enter your phone number (digits only)
+3. Enter your carrier (verizon, att, tmobile, sprint, etc.)
+
+Or manually edit the monitor_honeypot_with_email.ps1 file:
+- Find the line: `$smsGatewayEmail = "YOUR_PHONE_NUMBER@vtext.com"`
+- Replace with your actual phone number and carrier gateway
+- Example: `$smsGatewayEmail = "1234567890@txt.att.net"` for AT&T
+
+## Common SMS Gateways
+- Verizon: number@vtext.com
+- AT&T: number@txt.att.net
+- T-Mobile: number@tmomail.net
+- Sprint: number@messaging.sprintpcs.com
+- Virgin Mobile: number@vmobl.com
+- Boost Mobile: number@myboostmobile.com
+- Cricket: number@sms.cricketwireless.net
+- Metro PCS: number@mymetropcs.com
+
+## Monitoring Capabilities
+- **Local Monitoring**: Checks API and ngrok every 5 minutes
+- **Auto-Restart**: Automatically restarts services if they go down (infinite loop)
+- **Notification System**: 
+  - Desktop notifications (working)
+  - SMS notifications via email gateway (once configured)
+  - Logging to file (working)
+- **Recovery Alerts**: Notifies when services come back online
+
+## 6-Day Operation Assurance
+- Monitoring script runs in infinite loop
+- Auto-restarts services when they fail
+- Logs all events to C:\honeypot-api-project\logs\monitor.log
+- Sends notifications when services go down/up
+
+## Files Created
+- monitor_honeypot_with_email.ps1 - Main monitoring script
+- setup_sms_notifications.bat - SMS configuration helper
+- start_email_monitor.bat - Quick start script
+- logs\monitor.log - Event logs
+
+## Emergency Commands
+- To stop monitoring: taskkill /F /PID 24348
+- To check status: run check_status.bat
+- To restart system: run start_complete_system.bat
+
+Your system is now ready for the 6-day operation period with improved notification capabilities that work better with your captive WiFi environment.

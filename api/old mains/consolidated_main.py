@@ -25,47 +25,6 @@ ENABLE_CALLBACK = os.getenv("ENABLE_CALLBACK", "false").lower() == "true"
 conversations = {}
 intelligence_data = {}
 
-# ========== INTELLIGENCE GRAPH ENGINE INTEGRATION ==========
-# Import and integrate the graph engine for reinforcement learning
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'intelligence_graph'))
-
-from intelligence_graph.graph_engine import process_case, get_visualization_data, get_statistics
-
-def update_intelligence_graph(session_id: str, text: str, detection_result: Dict, intelligence: Dict):
-    """
-    Update the intelligence graph with new case data for reinforcement learning
-    """
-    try:
-        # Prepare case data for the graph engine
-        case_data = {
-            "case_id": session_id,
-            "message_text": text,
-            "scam_detected": detection_result.get("detected", False),
-            "confidence_score": detection_result.get("score", 0.0),
-            "categories": detection_result.get("categories", []),
-            "entities": {
-                "upi": list(intelligence.get("upi_ids", set())),
-                "phone": list(intelligence.get("phones", set())),
-                "url": list(intelligence.get("urls", set())),
-                "bank_account": list(intelligence.get("bank_accounts", set())),
-                "email": list(intelligence.get("emails", set())),
-                "pan": list(intelligence.get("pan_cards", set())),
-                "aadhaar": list(intelligence.get("aadhaars", set()))
-            },
-            "behavioral_tags": detection_result.get("reasons", []),
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        # Process the case in the intelligence graph
-        process_case(case_data)
-        
-        print(f"[GRAPH] Updated intelligence graph for session {session_id}")
-        
-    except Exception as e:
-        print(f"[GRAPH] Error updating intelligence graph: {e}")
-
 # ========== ENUMS AND CLASSES FOR VULNERABLE AGENTS ==========
 from typing import Dict, List
 from dataclasses import dataclass
@@ -932,73 +891,6 @@ def call_ollama_api(prompt: str, model: str = "llama2") -> str:
         print(f"Error in direct Ollama integration: {e}")
         return None
 
-def check_url_on_spotthescam(url: str) -> Dict:
-    """
-    Check a URL on spotthescam.in to see if it's reported as malicious
-    """
-    try:
-        # Check if the URL is valid first
-        import urllib.parse
-        parsed_url = urllib.parse.urlparse(url)
-        if not parsed_url.netloc or parsed_url.scheme not in ['http', 'https']:
-            return {
-                "url": url,
-                "is_malicious": False,
-                "risk_level": "low",
-                "details": {"note": "Invalid URL format"},
-                "status": "invalid"
-            }
-        
-        # Since spotthescam.in doesn't have a public API endpoint for checking URLs,
-        # we'll implement a simulated check that mimics what a real integration would do
-        # In a real scenario, they might have an endpoint like /api/check or similar
-        
-        # For now, we'll make a request to see if the URL exists and return appropriate status
-        # This simulates what would happen if there was an actual API
-        response = requests.head(url, timeout=10, allow_redirects=True)
-        
-        # If the URL is accessible, we'll return a simulated check result
-        # In a real implementation, this would call their actual API
-        return {
-            "url": url,
-            "is_malicious": False,  # Default assumption for simulation
-            "risk_level": "unknown",  # Would come from their actual service
-            "details": {
-                "note": f"URL connectivity test performed (spotthescam.in integration simulated)",
-                "status_code": response.status_code,
-                "accessible": response.status_code < 400
-            },
-            "status": "checked"
-        }
-
-    except requests.exceptions.Timeout:
-        # Handle timeout specifically
-        return {
-            "url": url,
-            "is_malicious": None,
-            "risk_level": "unknown",
-            "details": {"error": "Request timed out checking URL"},
-            "status": "timeout"
-        }
-    except requests.exceptions.RequestException as e:
-        # Handle other request errors - this simulates what would happen if spotthescam.in API was down
-        return {
-            "url": url,
-            "is_malicious": None,
-            "risk_level": "unknown",
-            "details": {"error": f"Request error: {str(e)}"},
-            "status": "error"
-        }
-    except Exception as e:
-        print(f"Error checking URL on spotthescam.in: {e}")
-        return {
-            "url": url,
-            "is_malicious": None,
-            "risk_level": "unknown",
-            "details": {"error": str(e)},
-            "status": "error"
-        }
-
 def generate_agent_response_with_context(text: str, session_id: str, scam_detected: bool,
                                        conversation_history: List, agent_category: str) -> str:
     """
@@ -1015,8 +907,7 @@ def generate_agent_response_with_context(text: str, session_id: str, scam_detect
             "emails": set(),
             "pan_cards": set(),
             "aadhaars": set(),
-            "keywords": set(),
-            "url_checks": {}  # Store URL check results
+            "keywords": set()
         }
 
     # Add to conversation history
@@ -1190,7 +1081,7 @@ Generate a short, natural response (1-2 sentences) as the vulnerable victim pers
                 "How can I verify your identity before discussing personal matters?",
                 "I prefer to meet in person before sharing personal details.",
                 "I'm not comfortable sending money to online contacts.",
-                "Can we discuss this more before proceeding?",
+                "Can we discuss this more before proceeding with anything?",
                 "Money should never be part of a real relationship.",
                 "I need to trust and verify you first.",
                 "This seems rushed for our relationship stage.",
@@ -1321,8 +1212,7 @@ def extract_intelligence(text: str, session_id: str) -> Dict:
             "emails": set(),
             "pan_cards": set(),
             "aadhaars": set(),
-            "keywords": set(),
-            "url_checks": {}  # Store URL check results
+            "keywords": set()
         }
 
     session_data = intelligence_data[session_id]
@@ -1331,10 +1221,6 @@ def extract_intelligence(text: str, session_id: str) -> Dict:
     # Store extracted data
     for url in detection["extracted"]["urls"]:
         session_data["urls"].add(url)
-
-        # Check the URL on spotthescam.in
-        url_check_result = check_url_on_spotthescam(url)
-        session_data["url_checks"][url] = url_check_result
 
     for upi in detection["extracted"]["upi_ids"]:
         # Clean UPI ID and add to set
@@ -1411,13 +1297,6 @@ def send_evaluation_callback(session_id: str, scam_detected: bool):
             k: v for k, v in payload["extractedIntelligence"].items() if v
         }
 
-        # Add URL check results to agent notes if available
-        if session_data["url_checks"]:
-            malicious_urls = [url for url, check in session_data["url_checks"].items() 
-                             if check.get("is_malicious", False)]
-            if malicious_urls:
-                payload["agentNotes"] += f" Identified {len(malicious_urls)} malicious URLs on spotthescam.in: {', '.join(malicious_urls[:3])}."
-
         # Send to evaluation endpoint
         response = requests.post(
             EVALUATION_ENDPOINT,
@@ -1435,13 +1314,12 @@ def send_evaluation_callback(session_id: str, scam_detected: bool):
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
-        "message": "AI-Powered Multi-Agent Honeypot System with Ollama Integration and Intelligence Graph",
-        "version": "7.0.0",
+        "message": "AI-Powered Multi-Agent Honeypot System with Ollama Integration",
+        "version": "6.0.0",
         "status": "running",
         "mode": API_VALIDATION_MODE,
         "timestamp": datetime.now().isoformat(),
-        "agent_personalities_available": len(SCAM_CATEGORIES) + 1,  # +1 for normal
-        "features": ["Ollama Integration", "SpotTheScam.in URL Checking", "Multi-Agent System", "Intelligence Graph", "Reinforcement Learning"]
+        "agent_personalities_available": len(SCAM_CATEGORIES) + 1  # +1 for normal
     })
 
 @app.route("/health", methods=["GET"])
@@ -1451,8 +1329,7 @@ def health():
         "service": "multi-agent-honeypot",
         "timestamp": datetime.now().isoformat(),
         "conversations_active": len(conversations),
-        "scam_categories_supported": len(SCAM_CATEGORIES),
-        "features": ["Ollama Integration", "SpotTheScam.in URL Checking", "Intelligence Graph"]
+        "scam_categories_supported": len(SCAM_CATEGORIES)
     })
 
 @app.route("/api/honeypot/", methods=["POST"])
@@ -1528,22 +1405,19 @@ def process_message():
     # 7. Extract intelligence
     intelligence = extract_intelligence(text, session_id)
 
-    # 8. Update the intelligence graph for reinforcement learning
-    update_intelligence_graph(session_id, text, detection_result, intelligence)
-
-    # 9. Generate agent response using the appropriate agent with Ollama priority
+    # 8. Generate agent response using the appropriate agent with Ollama priority
     agent_reply = generate_agent_response_with_context(
         text, session_id, scam_detected, conversation_history, agent_category
     )
 
-    # 10. Get agent information for response
+    # 9. Get agent information for response
     agent_info = get_agent_info(agent_category)
 
-    # 11. Send evaluation callback if scam detected
+    # 10. Send evaluation callback if scam detected
     if scam_detected and len(conversations.get(session_id, [])) >= 3:
         send_evaluation_callback(session_id, scam_detected)
 
-    # 12. Prepare response
+    # 11. Prepare response
     response_time = (datetime.now() - start_time).total_seconds()
 
     response = {
@@ -1586,8 +1460,7 @@ def process_message():
             "phoneNumbers": list(intelligence["phones"])[:5],  # Increased from 3 to 5
             "suspiciousKeywords": list(intelligence["keywords"])[:10],  # Increased from 5 to 10
             "panCards": list(intelligence["pan_cards"])[:5],  # Increased from 3 to 5
-            "aadhaarNumbers": list(intelligence["aadhaars"])[:5],  # Increased from 3 to 5
-            "urlChecks": intelligence["url_checks"]  # Added URL check results
+            "aadhaarNumbers": list(intelligence["aadhaars"])[:5]  # Increased from 3 to 5
         }
 
     print(f"[API] Processed session={session_id}, scam={scam_detected}, "
@@ -1600,61 +1473,20 @@ def validate_api():
     """Endpoint for validators to test API"""
     return jsonify({
         "status": "success",
-        "message": "Multi-Agent API with Ollama Integration and Intelligence Graph is ready for evaluation",
+        "message": "Multi-Agent API with Ollama Integration is ready for evaluation",
         "validationMode": API_VALIDATION_MODE,
         "supportedKeys": ["test_key_123", "prod_key_456", "eval_*", "hackathon_*"],
         "supportedScamCategories": list(SCAM_CATEGORIES.keys()),
         "availableAgents": [get_agent_info(cat)["name"] for cat in SCAM_CATEGORIES.keys()],
-        "features": ["Ollama Integration", "SpotTheScam.in URL Checking", "Multi-Agent System", "Intelligence Graph"],
         "timestamp": datetime.now().isoformat()
     })
-
-@app.route("/api/intelligence/graph", methods=["GET"])
-def get_intelligence_graph():
-    """Endpoint to retrieve the intelligence graph data"""
-    try:
-        graph_data = get_visualization_data()
-        stats = get_statistics()
-        
-        return jsonify({
-            "status": "success",
-            "graph": graph_data,
-            "statistics": stats,
-            "timestamp": datetime.now().isoformat()
-        })
-    except Exception as e:
-        print(f"[GRAPH] Error retrieving graph data: {e}")
-        return jsonify({
-            "status": "error",
-            "message": f"Error retrieving graph data: {str(e)}",
-            "timestamp": datetime.now().isoformat()
-        }), 500
-
-@app.route("/api/intelligence/statistics", methods=["GET"])
-def get_intelligence_statistics():
-    """Endpoint to retrieve intelligence statistics"""
-    try:
-        stats = get_statistics()
-        
-        return jsonify({
-            "status": "success",
-            "statistics": stats,
-            "timestamp": datetime.now().isoformat()
-        })
-    except Exception as e:
-        print(f"[STATS] Error retrieving statistics: {e}")
-        return jsonify({
-            "status": "error",
-            "message": f"Error retrieving statistics: {str(e)}",
-            "timestamp": datetime.now().isoformat()
-        }), 500
 
 @app.errorhandler(404)
 def not_found(e):
     return jsonify({
         "status": "error",
         "message": "Endpoint not found",
-        "availableEndpoints": ["/", "/health", "/api/honeypot/", "/api/validate", "/api/intelligence/graph", "/api/intelligence/statistics"]
+        "availableEndpoints": ["/", "/health", "/api/honeypot/", "/api/validate"]
     }), 404
 
 @app.errorhandler(500)
@@ -1668,7 +1500,7 @@ def server_error(e):
 # ========== MAIN EXECUTION ==========
 if __name__ == "__main__":
     print("=" * 60)
-    print("[ROCKET] ENHANCED HONEYPOT - INTELLIGENCE GRAPH INTEGRATION")
+    print("[ROCKET] CONSOLIDATED HONEYPOT - ADVANCED AI SYSTEM WITH OLLAMA PRIORITY")
     print("=" * 60)
     print(f"[SATELLITE] Starting on: http://0.0.0.0:5000")
     print(f"[LOCK] Validation mode: {API_VALIDATION_MODE}")
@@ -1676,12 +1508,10 @@ if __name__ == "__main__":
     print(f"[CLOCK] Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
     print("[CLIPBOARD] Available endpoints:")
-    print("  GET  /                           - API information")
-    print("  GET  /health                     - Health check")
-    print("  POST /api/honeypot/              - Main honeypot endpoint")
-    print("  GET  /api/validate               - API validation")
-    print("  GET  /api/intelligence/graph     - Intelligence graph data")
-    print("  GET  /api/intelligence/statistics - Intelligence statistics")
+    print("  GET  /                    - API information")
+    print("  GET  /health              - Health check")
+    print("  POST /api/honeypot/       - Main honeypot endpoint")
+    print("  GET  /api/validate        - API validation")
     print("=" * 60)
     print("[KEY] Test API keys:")
     print("  * test_key_123  (Primary test key)")
@@ -1695,7 +1525,7 @@ if __name__ == "__main__":
         print(f"  * {data['agent_info']['name']} ({category}): {data['agent_info']['personality']}")
     print("  * General Assistant Agent (normal): Helpful but not overly engaged")
     print("=" * 60)
-    print("[INTELLIGENCE GRAPH] This version includes graph-based intelligence and reinforcement learning")
+    print("[OLLAMA] This version prioritizes Ollama agents over fallback responses")
     print("=" * 60)
 
     app.run(host="0.0.0.0", port=5000, debug=True)
