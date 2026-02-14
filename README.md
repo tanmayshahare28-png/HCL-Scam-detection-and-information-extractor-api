@@ -13,6 +13,7 @@ This is a sophisticated honeypot API system with 13 specialized AI agents that d
 - **Intelligence Graph**: Reinforcement learning system for pattern recognition
 - **Multi-turn Conversations**: Maintains context across message exchanges
 - **Vulnerable Agent Profiles**: Different personality types to engage scammers effectively
+- **Advanced Scammer Tracking**: Unique scammer identification and duplicate detection system
 
 ### Supported Scam Categories
 - Bank Fraud
@@ -36,6 +37,22 @@ This is a sophisticated honeypot API system with 13 specialized AI agents that d
 - Financially Stressed Victim (high susceptibility to loan/job scams)
 - Cautious Curious Victim (moderate susceptibility across types)
 
+### Advanced Scammer Tracking System
+The system includes sophisticated scammer identification and tracking capabilities:
+
+- **Unique Scammer IDs**: Each unique scammer receives an ID in the format `SCAMMERXXXXXXX` (e.g., `SCAMMER0000001`)
+- **Duplicate Detection**: Automatically identifies when multiple conversations belong to the same scammer based on shared data points:
+  - Shared UPI IDs
+  - Shared phone numbers
+  - Shared URLs
+  - Shared bank accounts
+  - Shared PAN cards
+  - Shared Aadhaar numbers
+- **Data Merging**: When duplicates are detected, all data is consolidated under one scammer profile
+- **Conversation Linking**: Each conversation is linked to its corresponding scammer ID
+- **Consolidated Reports**: Generates comprehensive reports showing all data for each identified scammer
+- **Persistent Tracking**: Maintains scammer profiles across sessions for long-term pattern analysis
+
 ## System Architecture
 
 ### Main Components
@@ -49,6 +66,14 @@ This is a sophisticated honeypot API system with 13 specialized AI agents that d
 - Builds connections across multiple scam cases
 - Enables pattern recognition and risk assessment
 - Supports reinforcement learning for improved detection
+
+### Data Storage and Organization
+- **Individual Data Files**: Separate CSV files for each data type (UPI IDs, URLs, phone numbers, etc.)
+- **Scammer-Centric Storage**: All data is organized around unique scammer IDs
+- **Session Linking**: Each conversation session is linked to its corresponding scammer
+- **Consolidated Reports**: Comprehensive CSV files showing all data for each identified scammer
+- **Persistent Tracking**: Data is saved with timestamps and scammer associations for historical analysis
+- **Duplicate Prevention**: Shared data points automatically merge conversations under the same scammer profile
 
 ## Installation & Setup
 
@@ -161,6 +186,18 @@ python start_with_ngrok.py  # Starts API and ngrok with public URL display
   "timestamp": "2026-02-05T03:30:53.616864"
 }
 ```
+
+### Scammer Tracking and Data Storage
+The system automatically tracks and organizes scammer data:
+
+- **Scammer Identification**: Each unique scammer receives an ID like `SCAMMER0000001`
+- **Data Association**: All extracted intelligence is linked to the corresponding scammer ID
+- **Duplicate Detection**: Conversations with shared data points (UPI IDs, phone numbers, etc.) are merged under one scammer profile
+- **File Organization**: 
+  - Individual data type files include Scammer_ID column
+  - Consolidated reports show all data for each scammer
+  - Files are timestamped to prevent conflicts
+- **Storage Location**: All data is stored in the `extracted_data/` directory
 
 ### Web Interface
 Open `honeypot_tester.html` in your browser to access the web interface which shows:

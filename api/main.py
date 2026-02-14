@@ -25,11 +25,16 @@ ENABLE_CALLBACK = os.getenv("ENABLE_CALLBACK", "false").lower() == "true"
 conversations = {}
 intelligence_data = {}
 
+# ========== SCAMMER TRACKING SYSTEM ==========
+scammers_db = {}  # Maps scammer_id to scammer data
+scammer_counter = 1  # Counter for generating unique scammer IDs
+conversation_to_scammer_map = {}  # Maps conversation_id to scammer_id
+
 # ========== INTELLIGENCE GRAPH ENGINE INTEGRATION ==========
 # Import and integrate the graph engine for reinforcement learning
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'intelligence_graph'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from intelligence_graph.graph_engine import process_case, get_visualization_data, get_statistics
 
@@ -754,15 +759,63 @@ def detect_scam_intent(text: str, conversation_context: List = []) -> Dict:
         reasons.append(f"Found {len(urls)} URL(s): {', '.join(urls[:2])}")
 
     # Check for UPI IDs (specific patterns first)
-    upi_ids = re.findall(REGEX_PATTERNS["upi_id"], text, re.IGNORECASE)
-    # Also check for generic UPI patterns to catch more
-    generic_upis = re.findall(REGEX_PATTERNS["generic_upi"], text, re.IGNORECASE)
-    # Combine both, removing duplicates
-    all_upis = list(set(upi_ids + [upi for upi in generic_upis if upi not in upi_ids]))
+    # To avoid overlapping matches, we need to be more strategic about how we extract UPIs
+    # First, let's identify positions of all matches to avoid double-counting
+    specific_matches = [(m.group(), m.start(), m.end()) for m in re.finditer(REGEX_PATTERNS["upi_id"], text, re.IGNORECASE)]
+    
+    # Find all generic UPI matches with their positions
+    generic_matches = [(m.group(), m.start(), m.end()) for m in re.finditer(REGEX_PATTERNS["generic_upi"], text, re.IGNORECASE)]
+    
+    # Filter out generic matches that overlap with specific matches or are substrings of specific matches
+    all_upis = []
+    used_positions = set()
+    
+    # Add specific UPI matches first
+    for match_text, start, end in specific_matches:
+        if (start, end) not in used_positions:
+            all_upis.append(match_text)
+            used_positions.add((start, end))
+    
+    # Add generic UPI matches that don't overlap with specific matches and are not URLs or emails
+    for match_text, start, end in generic_matches:
+        # Check if this position overlaps with any specific match
+        overlaps = any(start < pos_end and end > pos_start for pos_start, pos_end in used_positions)
+        
+        # Also check if it's part of a URL or an email
+        is_part_of_url = any(url_part in match_text for url_part in urls)
+        is_email = bool(re.match(REGEX_PATTERNS["email"], match_text, re.IGNORECASE))
+        
+        # Only add if it doesn't overlap, is not part of a URL, and is not an email
+        if not overlaps and not is_part_of_url and not is_email:
+            # Additional validation: UPI IDs should have known UPI domains or follow typical UPI format
+            parts = match_text.split('@')
+            if len(parts) == 2:
+                username, domain = parts
+                # Valid UPI usernames are typically shorter and alphanumeric
+                if len(username) <= 30 and len(domain) <= 30 and username.replace('.', '').replace('_', '').replace('-', '').isalnum():
+                    # Check if this is a known UPI provider
+                    if domain in ['upi', 'paytm', 'gpay', 'phonepe', 'airtel', 'freecharge', 'mobikwik', 'oksbi', 'okicici', 'okhdfcbank', 'okaxis']:
+                        all_upis.append(match_text)
+                        used_positions.add((start, end))
+                    # Or if it looks like a custom UPI address with proper domain format
+                    elif '.' in domain and len(domain.split('.')) >= 2:
+                        # Make sure it's not just a regular domain but has UPI-like characteristics
+                        all_upis.append(match_text)
+                        used_positions.add((start, end))
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    all_upis = [x for x in all_upis if not (x in seen or seen.add(x))]
+    
     if all_upis:
         score += 0.4
         reasons.append(f"Found UPI ID(s): {', '.join(all_upis[:5])}")  # Show first 5
 
+    # Check for emails (after UPI filtering to avoid conflicts)
+    emails = re.findall(REGEX_PATTERNS["email"], text)
+    # Filter out emails that were already captured as UPI IDs
+    filtered_emails = [email for email in emails if email not in all_upis]
+    
     # Check for bank accounts
     bank_accounts = re.findall(REGEX_PATTERNS["bank_account"], text)
     if bank_accounts:
@@ -876,6 +929,10 @@ def detect_scam_intent(text: str, conversation_context: List = []) -> Dict:
     # Normalize score to 0-1
     score = min(score, 1.0)
 
+    # Extract emails separately and filter out those that are also UPI IDs
+    all_emails = re.findall(REGEX_PATTERNS["email"], text)
+    filtered_emails = [email for email in all_emails if email not in all_upis]
+    
     return {
         "score": round(score, 2),
         "detected": score > 0.35,  # Threshold for detection
@@ -888,7 +945,7 @@ def detect_scam_intent(text: str, conversation_context: List = []) -> Dict:
             "phones": phones,
             "pan_cards": pan_cards,
             "aadhaars": aadhaars,
-            "emails": re.findall(REGEX_PATTERNS["email"], text)
+            "emails": filtered_emails
         }
     }
 
@@ -1354,7 +1411,15 @@ def extract_intelligence(text: str, session_id: str) -> Dict:
         if len(phone_clean) >= 10:
             session_data["phones"].add(phone_clean)
 
-    for email in detection["extracted"]["emails"]:
+    # Handle emails separately since they might not be in detection["extracted"] anymore
+    # due to our filtering in detect_scam_intent
+    # Extract emails directly from the text to ensure we get all of them
+    emails = re.findall(REGEX_PATTERNS["email"], text)
+    # Filter out emails that were already captured as UPI IDs
+    all_upis = detection["extracted"]["upi_ids"]  # Get UPI IDs from detection
+    filtered_emails = [email for email in emails if email not in all_upis]
+    
+    for email in filtered_emails:
         session_data["emails"].add(email.lower())
 
     for pan in detection["extracted"]["pan_cards"]:
@@ -1372,11 +1437,260 @@ def extract_intelligence(text: str, session_id: str) -> Dict:
 
     return session_data
 
+import csv
+import os
+from datetime import datetime
+
+def save_extracted_data_to_csv(session_id: str):
+    """
+    Save extracted intelligence data to CSV files
+    """
+    try:
+        if session_id not in intelligence_data:
+            return
+
+        session_data = intelligence_data[session_id]
+        
+        # Get the associated scammer ID
+        scammer_id = conversation_to_scammer_map.get(session_id, "UNKNOWN")
+        
+        # Create data directory if it doesn't exist
+        data_dir = os.path.join(os.path.dirname(__file__), '..', 'extracted_data')
+        os.makedirs(data_dir, exist_ok=True)
+        
+        # Define CSV file paths
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Save UPI IDs
+        upi_file = os.path.join(data_dir, f"upi_ids_{timestamp}.csv")
+        if session_data["upi_ids"]:
+            with open(upi_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['Session_ID', 'Scammer_ID', 'UPI_ID', 'Timestamp'])
+                for upi in session_data["upi_ids"]:
+                    writer.writerow([session_id, scammer_id, upi, datetime.now().isoformat()])
+        
+        # Save URLs
+        url_file = os.path.join(data_dir, f"urls_{timestamp}.csv")
+        if session_data["urls"]:
+            with open(url_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['Session_ID', 'Scammer_ID', 'URL', 'Is_Malicious', 'Risk_Level', 'Timestamp'])
+                for url in session_data["urls"]:
+                    url_check = session_data["url_checks"].get(url, {})
+                    is_malicious = url_check.get('is_malicious', 'Unknown')
+                    risk_level = url_check.get('risk_level', 'Unknown')
+                    writer.writerow([session_id, scammer_id, url, is_malicious, risk_level, datetime.now().isoformat()])
+        
+        # Save Phone Numbers
+        phone_file = os.path.join(data_dir, f"phone_numbers_{timestamp}.csv")
+        if session_data["phones"]:
+            with open(phone_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['Session_ID', 'Scammer_ID', 'Phone_Number', 'Timestamp'])
+                for phone in session_data["phones"]:
+                    writer.writerow([session_id, scammer_id, phone, datetime.now().isoformat()])
+        
+        # Save Bank Accounts
+        bank_file = os.path.join(data_dir, f"bank_accounts_{timestamp}.csv")
+        if session_data["bank_accounts"]:
+            with open(bank_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['Session_ID', 'Scammer_ID', 'Bank_Account', 'Timestamp'])
+                for account in session_data["bank_accounts"]:
+                    writer.writerow([session_id, scammer_id, account, datetime.now().isoformat()])
+        
+        # Save PAN Cards
+        pan_file = os.path.join(data_dir, f"pan_cards_{timestamp}.csv")
+        if session_data["pan_cards"]:
+            with open(pan_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['Session_ID', 'Scammer_ID', 'PAN_Card', 'Timestamp'])
+                for pan in session_data["pan_cards"]:
+                    writer.writerow([session_id, scammer_id, pan, datetime.now().isoformat()])
+        
+        # Save Aadhaar Numbers
+        aadhaar_file = os.path.join(data_dir, f"aadhaar_numbers_{timestamp}.csv")
+        if session_data["aadhaars"]:
+            with open(aadhaar_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['Session_ID', 'Scammer_ID', 'Aadhaar_Number', 'Timestamp'])
+                for aadhaar in session_data["aadhaars"]:
+                    writer.writerow([session_id, scammer_id, aadhaar, datetime.now().isoformat()])
+        
+        # Save Emails
+        email_file = os.path.join(data_dir, f"emails_{timestamp}.csv")
+        if session_data["emails"]:
+            with open(email_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['Session_ID', 'Scammer_ID', 'Email', 'Timestamp'])
+                for email in session_data["emails"]:
+                    writer.writerow([session_id, scammer_id, email, datetime.now().isoformat()])
+        
+        # Save Keywords
+        keyword_file = os.path.join(data_dir, f"suspicious_keywords_{timestamp}.csv")
+        if session_data["keywords"]:
+            with open(keyword_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['Session_ID', 'Scammer_ID', 'Keyword', 'Timestamp'])
+                for keyword in session_data["keywords"]:
+                    writer.writerow([session_id, scammer_id, keyword, datetime.now().isoformat()])
+        
+        print(f"[DATA SAVE] Extracted data saved for session {session_id} (Scammer: {scammer_id})")
+        
+    except Exception as e:
+        print(f"[DATA SAVE] Error saving data for session {session_id}: {e}")
+
+def find_existing_scammer(session_data):
+    """
+    Find if this session belongs to an existing scammer based on shared data
+    """
+    global scammers_db
+    
+    # Convert session data to comparable format
+    session_upis = set(session_data.get("upi_ids", []))
+    session_phones = set(session_data.get("phones", []))
+    session_urls = set(session_data.get("urls", []))
+    session_banks = set(session_data.get("bank_accounts", []))
+    session_pans = set(session_data.get("pan_cards", []))
+    session_aadhaars = set(session_data.get("aadhaars", []))
+    
+    # Check each existing scammer for shared data
+    for scammer_id, scammer_data in scammers_db.items():
+        # Check for any shared data points
+        if (session_upis & set(scammer_data.get("upi_ids", [])) or
+            session_phones & set(scammer_data.get("phones", [])) or
+            session_urls & set(scammer_data.get("urls", [])) or
+            session_banks & set(scammer_data.get("bank_accounts", [])) or
+            session_pans & set(scammer_data.get("pan_cards", [])) or
+            session_aadhaars & set(scammer_data.get("aadhaars", []))):
+            
+            return scammer_id  # Found a match
+    
+    return None  # No existing scammer found with shared data
+
+def create_or_update_scammer(session_id, session_data):
+    """
+    Create a new scammer or update an existing one based on shared data
+    """
+    global scammers_db, scammer_counter, conversation_to_scammer_map
+    
+    # Check if this session belongs to an existing scammer
+    existing_scammer_id = find_existing_scammer(session_data)
+    
+    if existing_scammer_id:
+        # Update existing scammer with new data
+        scammer_data = scammers_db[existing_scammer_id]
+        
+        # Merge data
+        scammer_data["upi_ids"] = set(scammer_data.get("upi_ids", set())) | set(session_data.get("upi_ids", []))
+        scammer_data["phones"] = set(scammer_data.get("phones", set())) | set(session_data.get("phones", []))
+        scammer_data["urls"] = set(scammer_data.get("urls", set())) | set(session_data.get("urls", []))
+        scammer_data["bank_accounts"] = set(scammer_data.get("bank_accounts", set())) | set(session_data.get("bank_accounts", []))
+        scammer_data["emails"] = set(scammer_data.get("emails", set())) | set(session_data.get("emails", []))
+        scammer_data["pan_cards"] = set(scammer_data.get("pan_cards", set())) | set(session_data.get("pan_cards", []))
+        scammer_data["aadhaars"] = set(scammer_data.get("aadhaars", set())) | set(session_data.get("aadhaars", []))
+        scammer_data["keywords"] = set(scammer_data.get("keywords", set())) | set(session_data.get("keywords", []))
+        
+        # Add this conversation to the scammer's list
+        if "conversations" not in scammer_data:
+            scammer_data["conversations"] = set()
+        scammer_data["conversations"].add(session_id)
+        
+        # Update the conversation to scammer mapping
+        conversation_to_scammer_map[session_id] = existing_scammer_id
+        
+        print(f"[SCAMMER] Updated existing scammer {existing_scammer_id} with data from session {session_id}")
+        return existing_scammer_id
+    else:
+        # Create a new scammer
+        new_scammer_id = f"SCAMMER{scammer_counter:07d}"  # SCAMMER0000001, SCAMMER0000002, etc.
+        scammer_counter += 1
+        
+        # Create scammer record
+        scammers_db[new_scammer_id] = {
+            "scammer_id": new_scammer_id,
+            "created_at": datetime.now().isoformat(),
+            "upi_ids": set(session_data.get("upi_ids", [])),
+            "phones": set(session_data.get("phones", [])),
+            "urls": set(session_data.get("urls", [])),
+            "bank_accounts": set(session_data.get("bank_accounts", [])),
+            "emails": set(session_data.get("emails", [])),
+            "pan_cards": set(session_data.get("pan_cards", [])),
+            "aadhaars": set(session_data.get("aadhaars", [])),
+            "keywords": set(session_data.get("keywords", [])),
+            "conversations": {session_id},
+            "total_conversations": 1
+        }
+        
+        # Update the conversation to scammer mapping
+        conversation_to_scammer_map[session_id] = new_scammer_id
+        
+        print(f"[SCAMMER] Created new scammer {new_scammer_id} for session {session_id}")
+        return new_scammer_id
+
+def save_scammer_data_to_csv():
+    """
+    Save all scammer data to a consolidated CSV file
+    """
+    try:
+        # Create data directory if it doesn't exist
+        data_dir = os.path.join(os.path.dirname(__file__), '..', 'extracted_data')
+        os.makedirs(data_dir, exist_ok=True)
+        
+        # Define CSV file path
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        scammer_file = os.path.join(data_dir, f"scammers_consolidated_{timestamp}.csv")
+        
+        with open(scammer_file, 'w', newline='', encoding='utf-8') as csvfile:
+            fieldnames = ['Scammer_ID', 'Created_At', 'Total_Conversations', 'UPI_IDs_Count', 'Phone_Numbers_Count', 
+                         'URLs_Count', 'Bank_Accounts_Count', 'Emails_Count', 'PAN_Cards_Count', 
+                         'Aadhaar_Numbers_Count', 'Keywords_Count', 'All_UPIS', 'All_Phones', 
+                         'All_URLs', 'All_Bank_Accounts', 'All_Emails', 'All_PAN_Cards', 'All_Aadhaar_Numbers']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for scammer_id, scammer_data in scammers_db.items():
+                row = {
+                    'Scammer_ID': scammer_id,
+                    'Created_At': scammer_data.get('created_at', ''),
+                    'Total_Conversations': len(scammer_data.get('conversations', [])),
+                    'UPI_IDs_Count': len(scammer_data.get('upi_ids', set())),
+                    'Phone_Numbers_Count': len(scammer_data.get('phones', set())),
+                    'URLs_Count': len(scammer_data.get('urls', set())),
+                    'Bank_Accounts_Count': len(scammer_data.get('bank_accounts', set())),
+                    'Emails_Count': len(scammer_data.get('emails', set())),
+                    'PAN_Cards_Count': len(scammer_data.get('pan_cards', set())),
+                    'Aadhaar_Numbers_Count': len(scammer_data.get('aadhaars', set())),
+                    'Keywords_Count': len(scammer_data.get('keywords', set())),
+                    'All_UPIS': '; '.join(scammer_data.get('upi_ids', set())),
+                    'All_Phones': '; '.join(scammer_data.get('phones', set())),
+                    'All_URLs': '; '.join(scammer_data.get('urls', set())),
+                    'All_Bank_Accounts': '; '.join(scammer_data.get('bank_accounts', set())),
+                    'All_Emails': '; '.join(scammer_data.get('emails', set())),
+                    'All_PAN_Cards': '; '.join(scammer_data.get('pan_cards', set())),
+                    'All_Aadhaar_Numbers': '; '.join(scammer_data.get('aadhaars', set()))
+                }
+                writer.writerow(row)
+        
+        print(f"[SCAMMER DATA SAVE] Consolidated scammer data saved to {scammer_file}")
+        
+    except Exception as e:
+        print(f"[SCAMMER DATA SAVE] Error saving consolidated scammer data: {e}")
+
 def send_evaluation_callback(session_id: str, scam_detected: bool):
     """
-    Send final intelligence to evaluation endpoint (if enabled)
+    Send final intelligence to evaluation endpoint (if enabled) and save to CSV
     """
     if not ENABLE_CALLBACK or not scam_detected:
+        # Even if callback is disabled, still save the data if scam detected
+        if scam_detected:
+            # Create or update scammer record
+            session_data = intelligence_data.get(session_id, {})
+            create_or_update_scammer(session_id, session_data)
+            
+            # Save extracted data to CSV
+            save_extracted_data_to_csv(session_id)
         return
 
     try:
@@ -1413,7 +1727,7 @@ def send_evaluation_callback(session_id: str, scam_detected: bool):
 
         # Add URL check results to agent notes if available
         if session_data["url_checks"]:
-            malicious_urls = [url for url, check in session_data["url_checks"].items() 
+            malicious_urls = [url for url, check in session_data["url_checks"].items()
                              if check.get("is_malicious", False)]
             if malicious_urls:
                 payload["agentNotes"] += f" Identified {len(malicious_urls)} malicious URLs on spotthescam.in: {', '.join(malicious_urls[:3])}."
@@ -1428,8 +1742,23 @@ def send_evaluation_callback(session_id: str, scam_detected: bool):
 
         print(f"[CALLBACK] Sent for session {session_id}, status: {response.status_code}")
 
+        # Create or update scammer record
+        create_or_update_scammer(session_id, session_data)
+        
+        # Save extracted data to CSV regardless of callback success
+        save_extracted_data_to_csv(session_id)
+
     except Exception as e:
         print(f"[CALLBACK] Error: {e}")
+        # Still try to save the data even if callback fails
+        try:
+            # Create or update scammer record
+            session_data = intelligence_data.get(session_id, {})
+            create_or_update_scammer(session_id, session_data)
+            
+            save_extracted_data_to_csv(session_id)
+        except Exception as save_e:
+            print(f"[DATA SAVE] Error saving data after callback failure: {save_e}")
 
 # ========== API ENDPOINTS ==========
 @app.route("/", methods=["GET"])
@@ -1592,6 +1921,18 @@ def process_message():
 
     print(f"[API] Processed session={session_id}, scam={scam_detected}, "
           f"active_agent={agent_info['name']}, time={response_time:.3f}s")
+
+    # Create or update scammer record and save extracted data to CSV regardless of callback settings if scam detected
+    if scam_detected:
+        # Create or update scammer record
+        session_data = intelligence_data.get(session_id, {})
+        create_or_update_scammer(session_id, session_data)
+        
+        # Save extracted data to CSV
+        save_extracted_data_to_csv(session_id)
+        
+        # Save consolidated scammer data
+        save_scammer_data_to_csv()
 
     return jsonify(response)
 
